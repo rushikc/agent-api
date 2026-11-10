@@ -185,3 +185,121 @@ func TokenFrom(cfg *config.Config) string {
 	b, _ := os.ReadFile(cfg.TokenPath())
 	return string(bytes.TrimSpace(b))
 }
+
+func (c *Client) long() *Client {
+	cc := *c
+	if c.HTTP != nil {
+		cc.HTTP = &http.Client{Transport: c.HTTP.Transport, Timeout: 2 * time.Minute}
+	}
+	return &cc
+}
+
+func (c *Client) GCPProjects() (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := c.do(http.MethodGet, "/v1/gcp/projects", nil, &raw)
+	return raw, err
+}
+
+func (c *Client) GCPAuth() (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := c.long().do(http.MethodGet, "/v1/gcp/auth", nil, &raw)
+	return raw, err
+}
+
+func (c *Client) GCPCall(alias, task string, params any, confirm, viaMCP bool) (json.RawMessage, error) {
+	path := fmt.Sprintf("/v1/gcp/%s/%s", alias, task)
+	if confirm {
+		path += "?confirm=1"
+	}
+	var raw json.RawMessage
+	err := c.long().do(http.MethodPost, path, params, &raw)
+	return raw, err
+}
+
+func (c *Client) E2ERun(project string, body map[string]any) (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := c.do(http.MethodPost, "/v1/e2e/"+project+"/runs", body, &raw)
+	return raw, err
+}
+
+func (c *Client) E2EGet(id string) (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := c.do(http.MethodGet, "/v1/e2e/runs/"+id, nil, &raw)
+	return raw, err
+}
+
+func (c *Client) E2EList(project string) (json.RawMessage, error) {
+	q := "/v1/e2e/runs"
+	if project != "" {
+		q += "?project=" + project
+	}
+	var raw json.RawMessage
+	err := c.do(http.MethodGet, q, nil, &raw)
+	return raw, err
+}
+
+func (c *Client) E2ELogs(id string) (string, error) {
+	var out struct {
+		Logs string `json:"logs"`
+	}
+	err := c.do(http.MethodGet, "/v1/e2e/runs/"+id+"/logs", nil, &out)
+	return out.Logs, err
+}
+
+func (c *Client) E2ECancel(id string) error {
+	return c.do(http.MethodDelete, "/v1/e2e/runs/"+id, nil, nil)
+}
+
+func (c *Client) E2EPrune() error {
+	return c.do(http.MethodPost, "/v1/e2e/prune", nil, nil)
+}
+
+func (c *Client) E2EBuild(project string) (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := c.long().do(http.MethodPost, "/v1/e2e/"+project+"/build", nil, &raw)
+	return raw, err
+}
+
+func (c *Client) SecretsList() (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := c.do(http.MethodGet, "/v1/secrets", nil, &raw)
+	return raw, err
+}
+
+func (c *Client) SecretsSet(name, value string) error {
+	return c.do(http.MethodPost, "/v1/secrets", map[string]string{"name": name, "value": value}, nil)
+}
+
+func (c *Client) SecretsRm(name string) error {
+	return c.do(http.MethodDelete, "/v1/secrets/"+name, nil, nil)
+}
+
+func (c *Client) SecretsCheck(project string) (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := c.do(http.MethodPost, "/v1/secrets/check", map[string]string{"project": project}, &raw)
+	return raw, err
+}
+
+func (c *Client) SecretsLock() error {
+	return c.do(http.MethodPost, "/v1/secrets/lock", nil, nil)
+}
+
+func (c *Client) Alerts() (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := c.do(http.MethodGet, "/v1/alerts", nil, &raw)
+	return raw, err
+}
+
+func (c *Client) AlertsTest() error {
+	return c.do(http.MethodPost, "/v1/alerts/test", nil, nil)
+}
+
+func (c *Client) AlertsMute(d string) error {
+	return c.do(http.MethodPost, "/v1/alerts/mute", map[string]string{"duration": d}, nil)
+}
+
+func (c *Client) EventsRecent() (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := c.do(http.MethodGet, "/v1/events", nil, &raw)
+	return raw, err
+}

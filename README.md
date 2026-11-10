@@ -66,7 +66,9 @@ Logs: `~/.devhub/logs/daemon.log` (rotated ~5MB × 3). Pidfile: `~/.devhub/daemo
 devhub mcp install --cursor   # backup + merge ~/.cursor/mcp.json; other servers kept
 ```
 
-That adds `{ "mcpServers": { "devhub": { "command": "<abs devhub>", "args": ["mcp"] } } }`. `devhub mcp` is a stdio server that proxies through the local API. Mutations follow `mcp.allow_mutations` (default true). `free_port` needs `mcp.allow_port_kill` (default false). `read_logs` scrubs secrets (AWS keys, PEM, Bearer, `*_SECRET=`, `*_TOKEN=`, GCP service accounts).
+That adds `{ "mcpServers": { "devhub": { "command": "<abs devhub>", "args": ["mcp"] } } }`. `devhub mcp` is a stdio server that proxies through the local API. Mutations follow `mcp.allow_mutations` (default true). `free_port` needs `mcp.allow_port_kill` (default false). `read_logs` scrubs secrets (AWS keys, PEM, Bearer, `*_SECRET=`, `*_TOKEN=`, GCP service accounts, plus exact values from the secrets broker).
+
+GCP MCP tools: `gcp_list_projects`, `gcp_logs`, `gcp_bq_query`, `gcp_run_status`, `gcp_pubsub_peek`, `gcp_gcs_list`. Prod aliases with `require_confirm` are refused over MCP unless `gcp.allow_prod_via_mcp` is true. E2E: `e2e_run`, `e2e_status`, `e2e_failures`, `e2e_logs`. `secrets_list` returns names only. `events_recent` lists crashes and failures.
 
 ## Skills and rules
 
@@ -123,6 +125,86 @@ devhub down [project]
 
 The daemon restarts `on-failure` / `always` shadows with exponential backoff (max 5). Restart count shows in the shadows TUI.
 
+## GCP gateway
+
+Auth is Application Default Credentials only (`gcloud auth application-default login`). Devhub never stores service account keys. Optional impersonation uses `impersonate_service_account`.
+
+```yaml
+# ~/.devhub/config.yaml
+gcp:
+  allow_prod_via_mcp: false
+  impersonate_service_account: ""   # optional
+  rate_limit_per_min: 30
+  projects:
+    - id: my-proj-dev
+      alias: dev
+      allow: [logs.read, bq.query, pubsub.peek, run.status, secrets.read]
+      bq: {max_bytes_billed: 1GB, dry_run_first: true}
+    - id: my-proj-prod
+      alias: prod
+      allow: [logs.read, run.status]
+      require_confirm: true
+```
+
+A per-project `gcp.projects` block in `devhub.yaml` overlays by alias. CLI: `devhub gcp ls`, `devhub gcp logs dev --filter 'severity>=ERROR' --since 1h`, `devhub gcp bq dev "SELECT 1"`, `devhub gcp run dev`, `devhub gcp pubsub peek dev mysub`, `devhub gcp auth check`. Prefix `g` opens the TUI.
+
+## E2E sandbox
+
+Runs Playwright (or any command) through the Docker Engine API (OrbStack, Docker Desktop, or Colima). The repo is copied in as a tar of tracked files plus the current diff — never bind-mounted read-write. Sidecars share a per-run network. Teardown always runs.
+
+```yaml
+# devhub.yaml
+e2e:
+  image: devhub/krayon-e2e
+  dockerfile: ./e2e/Dockerfile
+  cache_volumes: [node_modules, ~/.cache/ms-playwright]
+  command: npx playwright test
+  services:
+    - name: db
+      image: postgres:16
+      env: {POSTGRES_PASSWORD: devhub}
+      ready: {tcp: 5432}
+  env: {BASE_URL: http://app:3000}
+  secrets: [STRIPE_TEST_KEY]
+  artifacts: [playwright-report, test-results]
+  timeout: 20m
+  resources: {cpus: 2, memory: 4g}
+```
+
+CLI: `devhub e2e build|run|ls|logs|open|cancel|prune`. Prefix `e` in tmux.
+
+## Secrets broker
+
+References in `env` and `e2e.secrets`: `keychain://name`, `gcp://alias/secret[#version]`, `op://Vault/Item/field` (if `op` is installed). Values are resolved in the daemon and injected only as process/container env. They are never written to disk, logs, the registry, the audit table (names only), tmux scrollback, or API/MCP responses. The log scrubber also redacts exact cached values. `devhub secrets lock` clears the 15-minute memory cache.
+
+```bash
+devhub secrets set stripe-test   # hidden prompt, Keychain service "devhub"
+devhub secrets ls                # names and sources
+devhub secrets check [project]
+devhub secrets rm stripe-test
+```
+
+There is no MCP tool that returns a secret value.
+
+## Alerts
+
+```yaml
+alerts:
+  quiet_hours: { start: "23:00", end: "08:00", location: Asia/Kolkata }
+  slack: { webhook: "" }    # empty = disabled
+  rules:
+    - on: shadow.crashed
+      notify: [macos]
+    - on: resource.threshold
+      when: { rss_mb: 2048, cpu_pct: 200, for: 30s }
+      notify: [macos]
+    - on: e2e.failed
+      notify: [macos]
+      actions: [open_report]
+```
+
+Events: `shadow.crashed`, `shadow.restarted_max`, `e2e.finished`, `e2e.failed`, `resource.threshold`, `port.conflict`, `gcp.error`. Deduped for 60s. Clicking a `terminal-notifier` alert focuses the tmux window or opens the E2E report. CLI: `devhub alerts ls|test|mute 1h`. Prefix `a`.
+
 ## Janitor
 
 ```bash
@@ -176,6 +258,9 @@ devhub projects    # switch project session
 devhub skills-ui   # skills / rules
 devhub janitor     # ports / orphans
 devhub updown      # profile up / down
+devhub gcp-ui      # GCP gateway
+devhub e2e-ui      # E2E runs
+devhub alerts-ui   # recent alerts
 ```
 
 ## Keybindings
@@ -193,6 +278,9 @@ macOS never sends a bare Option press, so Option+key requires the terminal to tr
 | `M-k` / `prefix k` | Skills / rules (`c` copy, `e` edit, `s` sync, `d` doctor) |
 | `M-o` / `prefix o` | Janitor (tab Ports/Orphans, `x` kill, `a` adopt) |
 | `M-u` / `prefix u` | Profile up / down |
+| `M-g` / `prefix g` | GCP gateway |
+| `M-e` / `prefix e` | E2E runs (Enter logs, `r` rerun, `o` report) |
+| `M-a` / `prefix a` | Recent alerts |
 | `M-1`…`M-9` / `prefix 1`…`9` | Jump to `v1`…`v9` of the current project |
 | Esc / `q` | Close any popup |
 
@@ -228,10 +316,21 @@ api:
 mcp:
   allow_mutations: true
   allow_port_kill: false
+  allow_prod_via_mcp: false
 skills:
   targets: [cursor]
 janitor:
   process_names: [node, npm, pnpm, bun, go, python, vite, next]
+gcp:
+  allow_prod_via_mcp: false
+  rate_limit_per_min: 30
+  projects: []
+e2e:
+  concurrency: 2
+  retention: 7d
+alerts:
+  quiet_hours: { start: "23:00", end: "08:00", location: Asia/Kolkata }
+  rules: []
 ```
 
 If Starship is detected, `devhub shell install` prints an `env_var.DEVHUB_PROJECT` module snippet instead of editing `PROMPT`.

@@ -12,12 +12,17 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/rushikesh/devhub/internal/alerts"
 	"github.com/rushikesh/devhub/internal/api"
 	"github.com/rushikesh/devhub/internal/client"
 	"github.com/rushikesh/devhub/internal/config"
 	"github.com/rushikesh/devhub/internal/core"
+	"github.com/rushikesh/devhub/internal/e2e"
+	"github.com/rushikesh/devhub/internal/events"
+	"github.com/rushikesh/devhub/internal/gcp"
 	"github.com/rushikesh/devhub/internal/monitor"
 	"github.com/rushikesh/devhub/internal/profile"
+	"github.com/rushikesh/devhub/internal/secrets"
 	"github.com/rushikesh/devhub/internal/skills"
 )
 
@@ -38,19 +43,42 @@ func Run(cfg *config.Config, svc *core.Service) error {
 	defer os.Remove(cfg.PidPath())
 
 	hub, _ := skills.Open(cfg)
-	srv := api.New(cfg, svc, hub)
+	bus := events.NewBus()
+	gw := gcp.NewGateway(cfg, svc.DB, bus)
+	sec := secrets.New(gw)
+	eng, _ := e2e.NewDocker()
+	if eng == nil {
+		eng = e2e.NewFake()
+	}
+	eq := e2e.NewQueue(cfg, svc.DB, eng, bus, sec)
+	al := alerts.New(cfg.Alerts, svc.DB)
+	al.Subscribe(bus)
+	svc.Publish = func(kind, target, project string, payload map[string]any) {
+		bus.Publish(events.Event{Type: kind, Target: target, Project: project, Payload: payload})
+	}
+	svc.ResolveEnv = func(project string, extra map[string]string) map[string]string {
+		return sec.ResolveMap(context.Background(), extra)
+	}
+	svc.ProfileEnv = func(project string) map[string]string {
+		return profile.EnvForProject(cfg, project)
+	}
+
+	srv := api.NewWith(cfg, svc, hub, api.Deps{GCP: gw, E2E: eq, Secrets: sec, Alerts: al, Bus: bus})
 	tok, _ := api.EnsureToken(cfg)
 	srv.Token = tok
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	defer sec.Lock()
 
 	lock, lockErr := monitor.TryLock(cfg.MonitorLockPath())
 	if lockErr == nil {
 		defer lock.Close()
 	}
 	go func() {
-		_ = monitor.RunForever(svc.Tmux, svc.DB, cfg.StatusPath(), 2*time.Second, ctx.Done())
+		_ = monitor.RunForeverHook(svc.Tmux, svc.DB, cfg.StatusPath(), 2*time.Second, ctx.Done(), func(snap monitor.Snapshot) {
+			al.ObserveSnapshot(bus, snap)
+		})
 	}()
 	go profile.Supervise(ctx, svc)
 	if hub != nil {
@@ -226,4 +254,3 @@ func openRotating(path string) (*os.File, error) {
 	}
 	return os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 }
-

@@ -76,6 +76,13 @@ func newRoot() *cobra.Command {
 		newJanitorUICmd(),
 		newSkillsUICmd(),
 		newUpdownUICmd(),
+		newGCPCmd(),
+		newE2ECmd(),
+		newSecretsCmd(),
+		newAlertsCmd(),
+		newGCPUICmd(),
+		newE2EUICmd(),
+		newAlertsUICmd(),
 	)
 	return cmd
 }

@@ -35,14 +35,18 @@ func HasDevhubSessions(client tmux.Client) (bool, error) {
 }
 
 func RunForever(client tmux.Client, db *registry.DB, statusPath string, interval time.Duration, stop <-chan struct{}) error {
-	return runLoop(client, db, statusPath, interval, stop, true)
+	return RunForeverHook(client, db, statusPath, interval, stop, nil)
+}
+
+func RunForeverHook(client tmux.Client, db *registry.DB, statusPath string, interval time.Duration, stop <-chan struct{}, onSnap func(Snapshot)) error {
+	return runLoop(client, db, statusPath, interval, stop, true, onSnap)
 }
 
 func RunLoop(client tmux.Client, db *registry.DB, statusPath string, interval time.Duration, stop <-chan struct{}) error {
-	return runLoop(client, db, statusPath, interval, stop, false)
+	return runLoop(client, db, statusPath, interval, stop, false, nil)
 }
 
-func runLoop(client tmux.Client, db *registry.DB, statusPath string, interval time.Duration, stop <-chan struct{}, forever bool) error {
+func runLoop(client tmux.Client, db *registry.DB, statusPath string, interval time.Duration, stop <-chan struct{}, forever bool, onSnap func(Snapshot)) error {
 	sampler := NewSampler(nil)
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
@@ -67,6 +71,9 @@ func runLoop(client tmux.Client, db *registry.DB, statusPath string, interval ti
 			return err
 		}
 		snap := BuildSnapshot(sessions, sampler)
+		if onSnap != nil {
+			onSnap(snap)
+		}
 		return WriteSnapshot(statusPath, snap)
 	}
 

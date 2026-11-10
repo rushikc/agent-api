@@ -19,11 +19,14 @@ import (
 
 // Service is the session API used by the CLI, TUI, and (in v2) an HTTP layer.
 type Service struct {
-	Cfg     *config.Config
-	Tmux    tmux.Client
-	DB      *registry.DB
-	Sampler *monitor.Sampler
-	exe     string
+	Cfg        *config.Config
+	Tmux       tmux.Client
+	DB         *registry.DB
+	Sampler    *monitor.Sampler
+	ResolveEnv func(project string, extra map[string]string) map[string]string
+	ProfileEnv func(project string) map[string]string
+	Publish    func(kind, target, project string, payload map[string]any)
+	exe        string
 }
 
 func Open() (*Service, error) {
@@ -84,7 +87,16 @@ func (s *Service) EnvFor(project string, extra map[string]string) map[string]str
 	for k, v := range extra {
 		env[k] = v
 	}
+	if s.ResolveEnv != nil {
+		return s.ResolveEnv(project, env)
+	}
 	return env
+}
+
+func (s *Service) Emit(kind, target, project string, payload map[string]any) {
+	if s != nil && s.Publish != nil {
+		s.Publish(kind, target, project, payload)
+	}
 }
 
 func Caller() string {
@@ -502,7 +514,13 @@ func (s *Service) Restart(ref string) error {
 	if cwd == "" {
 		return fmt.Errorf("no cwd for %s", ref)
 	}
-	env := s.projectEnv(sess.Project)
+	extra := map[string]string{}
+	if s.ProfileEnv != nil {
+		if m := s.ProfileEnv(sess.Project); m != nil {
+			extra = m
+		}
+	}
+	env := s.EnvFor(sess.Project, extra)
 	var sessionName string
 	remain := false
 	if sess.Kind == registry.KindShadow {
@@ -846,13 +864,9 @@ func RenderTmuxConf(cfg *config.Config, exe string) string {
 	useOption := mode == "option" || mode == "both"
 	if useOption {
 		b.WriteString("# Option/Meta (no prefix). Do not bind M-b / M-f / M-d (readline).\n")
-		writePopup("s", "picker", "-w 80% -h 70%", false)
-		writePopup("h", "shadows", "-w 80% -h 70%", false)
-		writePopup("r", "top", "-w 90% -h 80%", false)
-		writePopup("p", "projects", "-w 50% -h 50%", false)
-		writePopup("k", "skills-ui", "-w 80% -h 70%", false)
-		writePopup("o", "janitor", "-w 80% -h 70%", false)
-		writePopup("u", "updown", "-w 50% -h 50%", false)
+		for _, p := range PopupBindings() {
+			writePopup(p.Key, p.UI, p.Size, false)
+		}
 		for i := 1; i <= 9; i++ {
 			writeJump(i, false)
 		}
@@ -860,17 +874,35 @@ func RenderTmuxConf(cfg *config.Config, exe string) string {
 	}
 	if usePrefix {
 		b.WriteString("# Prefix bindings (Ctrl-Space by default)\n")
-		writePopup("s", "picker", "-w 80% -h 70%", true)
-		writePopup("h", "shadows", "-w 80% -h 70%", true)
-		writePopup("r", "top", "-w 90% -h 80%", true)
-		writePopup("p", "projects", "-w 50% -h 50%", true)
-		writePopup("k", "skills-ui", "-w 80% -h 70%", true)
-		writePopup("o", "janitor", "-w 80% -h 70%", true)
-		writePopup("u", "updown", "-w 50% -h 50%", true)
+		for _, p := range PopupBindings() {
+			writePopup(p.Key, p.UI, p.Size, true)
+		}
 		b.WriteString("\n")
 		for i := 1; i <= 9; i++ {
 			writeJump(i, true)
 		}
 	}
 	return b.String()
+}
+
+// PopupBinding is the TUI popup extension point (v4 palette can enumerate this list).
+type PopupBinding struct {
+	Key  string
+	UI   string
+	Size string
+}
+
+func PopupBindings() []PopupBinding {
+	return []PopupBinding{
+		{"s", "picker", "-w 80% -h 70%"},
+		{"h", "shadows", "-w 80% -h 70%"},
+		{"r", "top", "-w 90% -h 80%"},
+		{"p", "projects", "-w 50% -h 50%"},
+		{"k", "skills-ui", "-w 80% -h 70%"},
+		{"o", "janitor", "-w 80% -h 70%"},
+		{"u", "updown", "-w 50% -h 50%"},
+		{"g", "gcp-ui", "-w 90% -h 80%"},
+		{"e", "e2e-ui", "-w 80% -h 70%"},
+		{"a", "alerts-ui", "-w 70% -h 60%"},
+	}
 }

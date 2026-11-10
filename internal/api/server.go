@@ -13,13 +13,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rushikesh/devhub/internal/alerts"
 	"github.com/rushikesh/devhub/internal/client"
 	"github.com/rushikesh/devhub/internal/config"
 	"github.com/rushikesh/devhub/internal/core"
+	"github.com/rushikesh/devhub/internal/e2e"
+	"github.com/rushikesh/devhub/internal/events"
+	"github.com/rushikesh/devhub/internal/gcp"
 	"github.com/rushikesh/devhub/internal/janitor"
 	"github.com/rushikesh/devhub/internal/monitor"
 	"github.com/rushikesh/devhub/internal/profile"
 	"github.com/rushikesh/devhub/internal/registry"
+	"github.com/rushikesh/devhub/internal/scrub"
+	"github.com/rushikesh/devhub/internal/secrets"
 	"github.com/rushikesh/devhub/internal/skills"
 )
 
@@ -29,19 +35,40 @@ type Route struct {
 	Handler http.HandlerFunc
 }
 
+type Deps struct {
+	GCP     *gcp.Gateway
+	E2E     *e2e.Queue
+	Secrets *secrets.Broker
+	Alerts  *alerts.Engine
+	Bus     *events.Bus
+}
+
 type Server struct {
-	Cfg    *config.Config
-	Core   *core.Service
-	Skills *skills.Hub
-	Token  string
+	Cfg          *config.Config
+	Core         *core.Service
+	Skills       *skills.Hub
+	Token        string
 	RequireToken bool
-	mux    *http.ServeMux
-	routes []Route
+	GCP          *gcp.Gateway
+	E2E          *e2e.Queue
+	Secrets      *secrets.Broker
+	Alerts       *alerts.Engine
+	Bus          *events.Bus
+	mux          *http.ServeMux
+	routes       []Route
 }
 
 func New(cfg *config.Config, svc *core.Service, hub *skills.Hub) *Server {
-	s := &Server{Cfg: cfg, Core: svc, Skills: hub, mux: http.NewServeMux()}
+	return NewWith(cfg, svc, hub, Deps{})
+}
+
+func NewWith(cfg *config.Config, svc *core.Service, hub *skills.Hub, d Deps) *Server {
+	if d.E2E != nil && d.E2E.Scrub == nil {
+		d.E2E.Scrub = scrub.Scrub
+	}
+	s := &Server{Cfg: cfg, Core: svc, Skills: hub, GCP: d.GCP, E2E: d.E2E, Secrets: d.Secrets, Alerts: d.Alerts, Bus: d.Bus, mux: http.NewServeMux()}
 	s.registerCore()
+	s.registerV3()
 	return s
 }
 
@@ -139,11 +166,11 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Project string   `json:"project"`
-		Name    string   `json:"name"`
-		Kind    string   `json:"kind"`
-		Command string   `json:"command"`
-		Cwd     string   `json:"cwd"`
+		Project string `json:"project"`
+		Name    string `json:"name"`
+		Kind    string `json:"kind"`
+		Command string `json:"command"`
+		Cwd     string `json:"cwd"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), 400)
@@ -211,7 +238,7 @@ func (s *Server) sessionLogs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	writeJSON(w, map[string]string{"logs": out})
+	writeJSON(w, map[string]string{"logs": scrub.Scrub(out)})
 }
 
 func (s *Server) sessionLogsStream(w http.ResponseWriter, r *http.Request) {
@@ -235,7 +262,7 @@ func (s *Server) sessionLogsStream(w http.ResponseWriter, r *http.Request) {
 				fl.Flush()
 				return
 			}
-			b, _ := json.Marshal(out)
+			b, _ := json.Marshal(scrub.Scrub(out))
 			fmt.Fprintf(w, "data: %s\n\n", b)
 			fl.Flush()
 		}

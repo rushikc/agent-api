@@ -24,6 +24,13 @@ type DaemonClient interface {
 	ProfileDown(project string) error
 	Skills() (json.RawMessage, error)
 	Skill(name string) (json.RawMessage, error)
+	GCPProjects() (json.RawMessage, error)
+	GCPCall(alias, task string, params any, confirm, viaMCP bool) (json.RawMessage, error)
+	E2ERun(project string, body map[string]any) (json.RawMessage, error)
+	E2EGet(id string) (json.RawMessage, error)
+	E2ELogs(id string) (string, error)
+	SecretsList() (json.RawMessage, error)
+	EventsRecent() (json.RawMessage, error)
 }
 
 type Tools struct {
@@ -152,6 +159,67 @@ func (t *Tools) ListSkills() (string, error) {
 
 func (t *Tools) GetSkill(name string) (string, error) {
 	b, err := t.C.Skill(name)
+	return string(b), err
+}
+
+func (t *Tools) GCPListProjects() (string, error) {
+	b, err := t.C.GCPProjects()
+	return string(b), err
+}
+
+func (t *Tools) GCPCall(alias, task string, params map[string]any) (string, error) {
+	b, err := t.C.GCPCall(alias, task, params, false, true)
+	if err != nil {
+		return "", err
+	}
+	return Scrub(string(b)), nil
+}
+
+func (t *Tools) E2ERun(project, grep, shard string) (string, error) {
+	if !t.allowMut() {
+		return "", fmt.Errorf("mcp.allow_mutations is false")
+	}
+	b, err := t.C.E2ERun(project, map[string]any{"grep": grep, "shard": shard})
+	return string(b), err
+}
+
+func (t *Tools) E2EStatus(id string) (string, error) {
+	b, err := t.C.E2EGet(id)
+	return string(b), err
+}
+
+func (t *Tools) E2EFailures(id string) (string, error) {
+	b, err := t.C.E2EGet(id)
+	if err != nil {
+		return "", err
+	}
+	var run struct {
+		Summary      string `json:"summary"`
+		ArtifactPath string `json:"artifact_path"`
+		Status       string `json:"status"`
+	}
+	_ = json.Unmarshal(b, &run)
+	if run.Summary == "" {
+		return string(b), nil
+	}
+	return run.Summary + "\nartifacts: " + run.ArtifactPath, nil
+}
+
+func (t *Tools) E2ELogs(id string) (string, error) {
+	out, err := t.C.E2ELogs(id)
+	if err != nil {
+		return "", err
+	}
+	return Scrub(out), nil
+}
+
+func (t *Tools) SecretsList() (string, error) {
+	b, err := t.C.SecretsList()
+	return string(b), err
+}
+
+func (t *Tools) EventsRecent() (string, error) {
+	b, err := t.C.EventsRecent()
 	return string(b), err
 }
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/rushikesh/devhub/internal/config"
 	"github.com/rushikesh/devhub/internal/daemon"
+	"github.com/rushikesh/devhub/internal/e2e"
 	"github.com/rushikesh/devhub/internal/shell"
 	"github.com/spf13/cobra"
 )
@@ -68,6 +69,7 @@ func newDoctorCmd() *cobra.Command {
 			if cfg, err := config.Load(); err == nil {
 				fmt.Println("daemon:", daemon.Status(cfg))
 			}
+			printV3Doctor()
 			fmt.Println()
 			fmt.Println("Option (Alt) must send Meta/Esc+ so M-s, M-h, M-p work.")
 			fmt.Println("This disables typing special characters such as ©/π with Option in that profile.")
@@ -87,6 +89,41 @@ func newDoctorCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func printV3Doctor() {
+	fmt.Println("docker:", e2eRuntime())
+	if path, err := exec.LookPath("gcloud"); err == nil {
+		fmt.Println("gcloud:", path)
+	} else {
+		fmt.Println("gcloud: not found")
+	}
+	cmd := exec.Command("gcloud", "auth", "application-default", "print-access-token")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Println("ADC: missing (gcloud auth application-default login)")
+	} else if len(strings.TrimSpace(string(out))) > 0 {
+		fmt.Println("ADC: ok")
+	}
+	if _, err := exec.LookPath("terminal-notifier"); err == nil {
+		fmt.Println("terminal-notifier: ok (click-to-focus enabled)")
+	} else {
+		fmt.Println("terminal-notifier: not found (osascript fallback, no click-through)")
+	}
+	if _, err := exec.LookPath("op"); err == nil {
+		fmt.Println("1Password CLI: ok")
+	} else {
+		fmt.Println("1Password CLI: not installed")
+	}
+	if _, err := exec.LookPath("security"); err == nil {
+		fmt.Println("Keychain (security CLI): ok, service=devhub")
+	} else {
+		fmt.Println("Keychain: security CLI not found")
+	}
+}
+
+func e2eRuntime() string {
+	return e2e.DetectRuntime()
 }
 
 func printITermHelp() {

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/rushikesh/devhub/internal/core"
+	"github.com/rushikesh/devhub/internal/events"
 	"github.com/rushikesh/devhub/internal/registry"
 )
 
@@ -12,6 +13,7 @@ func Supervise(ctx context.Context, svc *core.Service) {
 	tick := time.NewTicker(3 * time.Second)
 	defer tick.Stop()
 	backoff := map[int64]time.Time{}
+	seenExit := map[int64]bool{}
 	for {
 		select {
 		case <-ctx.Done():
@@ -33,13 +35,19 @@ func Supervise(ctx context.Context, svc *core.Service) {
 					if err != nil {
 						continue
 					}
-					if sess.Status == registry.StatusRunning && sh.Restart != "always" {
+					if sess.Status == registry.StatusRunning {
+						seenExit[sess.ID] = false
+						if sh.Restart != "always" {
+							continue
+						}
 						continue
 					}
-					if sess.Status == registry.StatusRunning {
-						continue
+					if !seenExit[sess.ID] {
+						seenExit[sess.ID] = true
+						svc.Emit(events.ShadowCrashed, loaded.Name+"/"+sh.Name, loaded.Name, map[string]any{"name": sh.Name})
 					}
 					if sess.RestartCount >= 5 {
+						svc.Emit(events.ShadowRestartedMax, loaded.Name+"/"+sh.Name, loaded.Name, map[string]any{"name": sh.Name})
 						continue
 					}
 					if until, ok := backoff[sess.ID]; ok && time.Now().Before(until) {

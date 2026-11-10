@@ -17,13 +17,48 @@ import (
 )
 
 type Profile struct {
-	Name     string            `yaml:"name" json:"name"`
-	Env      map[string]string `yaml:"env" json:"env"`
-	EnvFile  string            `yaml:"env_file" json:"env_file,omitempty"`
-	Windows  []Window          `yaml:"windows" json:"windows"`
-	Shadows  []Shadow          `yaml:"shadows" json:"shadows"`
-	Skills   []string          `yaml:"skills" json:"skills"`
-	Path     string            `yaml:"-" json:"path"`
+	Name    string            `yaml:"name" json:"name"`
+	Env     map[string]string `yaml:"env" json:"env"`
+	EnvFile string            `yaml:"env_file" json:"env_file,omitempty"`
+	Windows []Window          `yaml:"windows" json:"windows"`
+	Shadows []Shadow          `yaml:"shadows" json:"shadows"`
+	Skills  []string          `yaml:"skills" json:"skills"`
+	GCP     GCPOverlay        `yaml:"gcp" json:"gcp,omitempty"`
+	E2E     E2EConfig         `yaml:"e2e" json:"e2e,omitempty"`
+	Path    string            `yaml:"-" json:"path"`
+}
+
+type GCPOverlay struct {
+	Projects []config.GCPProject `yaml:"projects" json:"projects,omitempty"`
+}
+
+type E2EConfig struct {
+	Image        string            `yaml:"image" json:"image"`
+	Dockerfile   string            `yaml:"dockerfile" json:"dockerfile"`
+	CacheVolumes []string          `yaml:"cache_volumes" json:"cache_volumes,omitempty"`
+	Command      string            `yaml:"command" json:"command"`
+	Services     []E2EService      `yaml:"services" json:"services,omitempty"`
+	Env          map[string]string `yaml:"env" json:"env,omitempty"`
+	Secrets      []string          `yaml:"secrets" json:"secrets,omitempty"`
+	Artifacts    []string          `yaml:"artifacts" json:"artifacts,omitempty"`
+	Timeout      string            `yaml:"timeout" json:"timeout,omitempty"`
+	Resources    E2EResources      `yaml:"resources" json:"resources,omitempty"`
+}
+
+type E2EService struct {
+	Name  string            `yaml:"name" json:"name"`
+	Image string            `yaml:"image" json:"image"`
+	Env   map[string]string `yaml:"env" json:"env,omitempty"`
+	Ready E2EReady          `yaml:"ready" json:"ready,omitempty"`
+}
+
+type E2EReady struct {
+	TCP int `yaml:"tcp" json:"tcp,omitempty"`
+}
+
+type E2EResources struct {
+	CPUs   float64 `yaml:"cpus" json:"cpus,omitempty"`
+	Memory string  `yaml:"memory" json:"memory,omitempty"`
 }
 
 type Window struct {
@@ -160,6 +195,14 @@ func mergedEnv(pr *Profile) map[string]string {
 	return env
 }
 
+func EnvForProject(cfg *config.Config, name string) map[string]string {
+	pr, err := Find(cfg, name)
+	if err != nil {
+		return nil
+	}
+	return mergedEnv(pr)
+}
+
 type UpResult struct {
 	Name   string `json:"name"`
 	Kind   string `json:"kind"`
@@ -196,6 +239,7 @@ func Up(svc *core.Service, pr *Profile, autoFree bool) ([]UpResult, error) {
 		cwd := absCwd(pr.Path, sh.Cwd)
 		if sh.Port > 0 {
 			if p, taken := janitor.PortTaken(sh.Port, sessions, nil); taken {
+				svc.Emit("port.conflict", fmt.Sprintf("%s:%d", pr.Name, sh.Port), pr.Name, map[string]any{"port": sh.Port, "pid": p.PID, "owner": p.Owner})
 				if autoFree {
 					_ = janitor.KillTree(p.PID)
 				} else {

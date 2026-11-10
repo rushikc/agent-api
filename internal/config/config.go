@@ -33,8 +33,9 @@ type APIConfig struct {
 }
 
 type MCPConfig struct {
-	AllowMutations bool `yaml:"allow_mutations"`
-	AllowPortKill  bool `yaml:"allow_port_kill"`
+	AllowMutations  bool `yaml:"allow_mutations"`
+	AllowPortKill   bool `yaml:"allow_port_kill"`
+	AllowProdViaMCP bool `yaml:"allow_prod_via_mcp"`
 }
 
 type SkillsConfig struct {
@@ -43,6 +44,61 @@ type SkillsConfig struct {
 
 type JanitorConfig struct {
 	ProcessNames []string `yaml:"process_names"`
+}
+
+type GCPConfig struct {
+	Projects                  []GCPProject `yaml:"projects"`
+	ImpersonateServiceAccount string       `yaml:"impersonate_service_account,omitempty"`
+	AllowProdViaMCP           bool         `yaml:"allow_prod_via_mcp"`
+	RateLimitPerMin           int          `yaml:"rate_limit_per_min"`
+}
+
+type GCPProject struct {
+	ID                        string   `yaml:"id"`
+	Alias                     string   `yaml:"alias"`
+	Allow                     []string `yaml:"allow"`
+	RequireConfirm            bool     `yaml:"require_confirm"`
+	ImpersonateServiceAccount string   `yaml:"impersonate_service_account,omitempty"`
+	BQ                        BQPolicy `yaml:"bq"`
+}
+
+type BQPolicy struct {
+	MaxBytesBilled string `yaml:"max_bytes_billed"`
+	DryRunFirst    bool   `yaml:"dry_run_first"`
+}
+
+type E2EGlobalConfig struct {
+	Concurrency int    `yaml:"concurrency"`
+	Retention   string `yaml:"retention"`
+}
+
+type AlertsConfig struct {
+	QuietHours QuietHours  `yaml:"quiet_hours"`
+	Slack      SlackConfig `yaml:"slack"`
+	Rules      []AlertRule `yaml:"rules"`
+}
+
+type QuietHours struct {
+	Start    string `yaml:"start"`
+	End      string `yaml:"end"`
+	Location string `yaml:"location"`
+}
+
+type SlackConfig struct {
+	Webhook string `yaml:"webhook"`
+}
+
+type AlertRule struct {
+	On      string    `yaml:"on"`
+	When    AlertWhen `yaml:"when"`
+	Notify  []string  `yaml:"notify"`
+	Actions []string  `yaml:"actions"`
+}
+
+type AlertWhen struct {
+	RSSMB  int     `yaml:"rss_mb"`
+	CPUPct float64 `yaml:"cpu_pct"`
+	For    string  `yaml:"for"`
 }
 
 type Config struct {
@@ -55,6 +111,9 @@ type Config struct {
 	MCP                   MCPConfig           `yaml:"mcp"`
 	Skills                SkillsConfig        `yaml:"skills"`
 	Janitor               JanitorConfig       `yaml:"janitor"`
+	GCP                   GCPConfig           `yaml:"gcp"`
+	E2E                   E2EGlobalConfig     `yaml:"e2e"`
+	Alerts                AlertsConfig        `yaml:"alerts"`
 	path                  string
 	dir                   string
 }
@@ -80,6 +139,8 @@ func Default() *Config {
 		Janitor: JanitorConfig{ProcessNames: []string{
 			"node", "npm", "pnpm", "bun", "go", "python", "python3", "vite", "next",
 		}},
+		GCP: GCPConfig{RateLimitPerMin: 30},
+		E2E: E2EGlobalConfig{Concurrency: 2, Retention: "7d"},
 	}
 }
 
@@ -133,6 +194,15 @@ func Load() (*Config, error) {
 	if len(cfg.Janitor.ProcessNames) == 0 {
 		cfg.Janitor.ProcessNames = Default().Janitor.ProcessNames
 	}
+	if cfg.GCP.RateLimitPerMin <= 0 {
+		cfg.GCP.RateLimitPerMin = 30
+	}
+	if cfg.E2E.Concurrency <= 0 {
+		cfg.E2E.Concurrency = 2
+	}
+	if cfg.E2E.Retention == "" {
+		cfg.E2E.Retention = "7d"
+	}
 	cfg.dir = dir
 	cfg.path = path
 	return cfg, nil
@@ -166,6 +236,12 @@ func (c *Config) Dir() string {
 	}
 	dir, _ := Dir()
 	return dir
+}
+
+func (c *Config) WithDir(dir string) *Config {
+	c.dir = dir
+	c.path = filepath.Join(dir, ConfigName)
+	return c
 }
 
 func (c *Config) DBPath() string {
@@ -206,6 +282,41 @@ func (c *Config) DaemonLogPath() string {
 
 func (c *Config) SkillsDir() string {
 	return filepath.Join(c.Dir(), "skills")
+}
+
+func (c *Config) E2EDir() string {
+	return filepath.Join(c.Dir(), "e2e")
+}
+
+func (c *Config) AllowProdViaMCP() bool {
+	return c.MCP.AllowProdViaMCP || c.GCP.AllowProdViaMCP
+}
+
+func MergeGCP(global GCPConfig, overlay []GCPProject) GCPConfig {
+	out := global
+	if len(overlay) == 0 {
+		return out
+	}
+	byAlias := map[string]GCPProject{}
+	for _, p := range global.Projects {
+		key := p.Alias
+		if key == "" {
+			key = p.ID
+		}
+		byAlias[key] = p
+	}
+	for _, p := range overlay {
+		key := p.Alias
+		if key == "" {
+			key = p.ID
+		}
+		byAlias[key] = p
+	}
+	out.Projects = out.Projects[:0]
+	for _, p := range byAlias {
+		out.Projects = append(out.Projects, p)
+	}
+	return out
 }
 
 func (c *Config) KeysMode() string {

@@ -21,6 +21,7 @@ const (
 	PidName       = "daemon.pid"
 	TokenName     = "token"
 	LogDirName    = "logs"
+	ScanCacheName = "scan-cache.json"
 )
 
 type Keys struct {
@@ -72,6 +73,14 @@ type E2EGlobalConfig struct {
 	Retention   string `yaml:"retention"`
 }
 
+type ScanConfig struct {
+	Roots          []string `yaml:"roots"`
+	Exclude        []string `yaml:"exclude"`
+	DepthDesktop   int      `yaml:"depth_desktop"`
+	DepthAll       int      `yaml:"depth_all"`
+	IncludeVolumes bool     `yaml:"include_volumes"`
+}
+
 type AlertsConfig struct {
 	QuietHours QuietHours  `yaml:"quiet_hours"`
 	Slack      SlackConfig `yaml:"slack"`
@@ -114,6 +123,7 @@ type Config struct {
 	GCP                   GCPConfig           `yaml:"gcp"`
 	E2E                   E2EGlobalConfig     `yaml:"e2e"`
 	Alerts                AlertsConfig        `yaml:"alerts"`
+	Scan                  ScanConfig          `yaml:"scan"`
 	path                  string
 	dir                   string
 }
@@ -139,8 +149,9 @@ func Default() *Config {
 		Janitor: JanitorConfig{ProcessNames: []string{
 			"node", "npm", "pnpm", "bun", "go", "python", "python3", "vite", "next",
 		}},
-		GCP: GCPConfig{RateLimitPerMin: 30},
-		E2E: E2EGlobalConfig{Concurrency: 2, Retention: "7d"},
+		GCP:  GCPConfig{RateLimitPerMin: 30},
+		E2E:  E2EGlobalConfig{Concurrency: 2, Retention: "7d"},
+		Scan: ScanConfig{DepthDesktop: 6, DepthAll: 10},
 	}
 }
 
@@ -254,6 +265,10 @@ func (c *Config) SkillsDir() string {
 
 func (c *Config) E2EDir() string {
 	return filepath.Join(c.Dir(), "e2e")
+}
+
+func (c *Config) ScanCachePath() string {
+	return filepath.Join(c.Dir(), ScanCacheName)
 }
 
 func (c *Config) AllowProdViaMCP() bool {
@@ -383,6 +398,18 @@ func (c *Config) normalize() {
 	if c.E2E.Retention == "" {
 		c.E2E.Retention = "7d"
 	}
+	if c.Scan.DepthDesktop <= 0 {
+		c.Scan.DepthDesktop = 6
+	}
+	if c.Scan.DepthAll <= 0 {
+		c.Scan.DepthAll = 10
+	}
+	if c.Scan.Roots == nil {
+		c.Scan.Roots = []string{}
+	}
+	if c.Scan.Exclude == nil {
+		c.Scan.Exclude = []string{}
+	}
 }
 
 func (c *Config) ProjectPath(name string) (string, error) {
@@ -436,6 +463,68 @@ func (c *Config) RemoveProject(name string) error {
 		return fmt.Errorf("unknown project %q", name)
 	}
 	delete(c.Projects, name)
+	return c.Save()
+}
+
+func (c *Config) UniqueProjectName(base string) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		base = "project"
+	}
+	if c.Projects == nil {
+		return base
+	}
+	if _, ok := c.Projects[base]; !ok {
+		return base
+	}
+	for i := 2; ; i++ {
+		cand := fmt.Sprintf("%s-%d", base, i)
+		if _, ok := c.Projects[cand]; !ok {
+			return cand
+		}
+	}
+}
+
+func (c *Config) ProjectNameForPath(canon string) (string, bool) {
+	if c == nil || c.Projects == nil {
+		return "", false
+	}
+	want := CanonPath(canon)
+	for name, p := range c.Projects {
+		expanded, err := ExpandPath(p)
+		if err != nil {
+			continue
+		}
+		if CanonPath(expanded) == want {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+func (c *Config) RenameProject(old, newName string) error {
+	old = strings.TrimSpace(old)
+	newName = strings.TrimSpace(newName)
+	if old == "" || newName == "" {
+		return fmt.Errorf("project name is required")
+	}
+	if _, ok := c.Projects[old]; !ok {
+		return fmt.Errorf("unknown project %q", old)
+	}
+	if old == newName {
+		return nil
+	}
+	if _, ok := c.Projects[newName]; ok {
+		return fmt.Errorf("project %q already exists", newName)
+	}
+	c.Projects[newName] = c.Projects[old]
+	delete(c.Projects, old)
+	if c.ProjectColors != nil {
+		if col, ok := c.ProjectColors[old]; ok {
+			c.ProjectColors[newName] = col
+			delete(c.ProjectColors, old)
+		}
+	}
 	return c.Save()
 }
 

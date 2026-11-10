@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/rushikesh/devhub/internal/client"
 	"github.com/rushikesh/devhub/internal/config"
@@ -33,6 +34,12 @@ type DaemonClient interface {
 	E2ELogs(id string) (string, error)
 	SecretsList() (json.RawMessage, error)
 	EventsRecent() (json.RawMessage, error)
+	ScanCache() (json.RawMessage, error)
+	ScanStart(body map[string]any) (json.RawMessage, error)
+	ScanJob(id string) (json.RawMessage, error)
+	Projects() (json.RawMessage, error)
+	AddProject(name, path string) (json.RawMessage, error)
+	RemoveProject(name string, kill bool) error
 }
 
 type Tools struct {
@@ -264,6 +271,69 @@ func (t *Tools) SecretsList() (string, error) {
 func (t *Tools) EventsRecent() (string, error) {
 	b, err := t.C.EventsRecent()
 	return string(b), err
+}
+
+func (t *Tools) ScanProjects(all, refresh bool, paths []string) (string, error) {
+	if !refresh && !all && len(paths) == 0 {
+		b, err := t.C.ScanCache()
+		if err == nil && len(b) > 0 && !strings.Contains(string(b), `"stale":true`) {
+			return string(b), nil
+		}
+	}
+	body := map[string]any{"all": all, "refresh": refresh, "paths": paths}
+	started, err := t.C.ScanStart(body)
+	if err != nil {
+		return "", err
+	}
+	var job struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(started, &job); err != nil || job.ID == "" {
+		return string(started), err
+	}
+	for i := 0; i < 120; i++ {
+		raw, err := t.C.ScanJob(job.ID)
+		if err != nil {
+			return "", err
+		}
+		var st struct {
+			Status string          `json:"status"`
+			Result json.RawMessage `json:"result"`
+			Error  string          `json:"error"`
+		}
+		if err := json.Unmarshal(raw, &st); err != nil {
+			return string(raw), nil
+		}
+		if st.Status == "done" {
+			if len(st.Result) > 0 {
+				return string(st.Result), nil
+			}
+			return string(raw), nil
+		}
+		if st.Status == "error" {
+			return "", fmt.Errorf("%s", st.Error)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return "", fmt.Errorf("scan timed out")
+}
+
+func (t *Tools) AddProject(name, path string) (string, error) {
+	if !t.allowMut() {
+		return "", fmt.Errorf("mcp.allow_mutations is false")
+	}
+	b, err := t.C.AddProject(name, path)
+	return string(b), err
+}
+
+func (t *Tools) RemoveProject(name string, kill bool) (string, error) {
+	if !t.allowMut() {
+		return "", fmt.Errorf("mcp.allow_mutations is false")
+	}
+	if err := t.C.RemoveProject(name, kill); err != nil {
+		return "", err
+	}
+	return "ok", nil
 }
 
 func ParseID(s string) (int64, error) {

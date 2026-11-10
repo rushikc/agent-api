@@ -84,7 +84,7 @@ func newDoctorCmd() *cobra.Command {
 			}
 			printV3Doctor()
 			fmt.Println()
-			fmt.Println("Option (Alt) must send Meta/Esc+ so M-s, M-h, M-p work.")
+			fmt.Println("Option (Alt) must send Meta/Esc+ so M-s, M-h, M-p, M-P work.")
 			fmt.Println("This disables typing special characters such as ©/π with Option in that profile.")
 			fmt.Println()
 			switch term {

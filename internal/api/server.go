@@ -25,6 +25,7 @@ import (
 	"github.com/rushikesh/devhub/internal/monitor"
 	"github.com/rushikesh/devhub/internal/profile"
 	"github.com/rushikesh/devhub/internal/registry"
+	"github.com/rushikesh/devhub/internal/scan"
 	"github.com/rushikesh/devhub/internal/scrub"
 	"github.com/rushikesh/devhub/internal/secrets"
 	"github.com/rushikesh/devhub/internal/skills"
@@ -42,6 +43,7 @@ type Deps struct {
 	Secrets *secrets.Broker
 	Alerts  *alerts.Engine
 	Bus     *events.Bus
+	Scan    *scan.Runner
 }
 
 type Server struct {
@@ -55,6 +57,7 @@ type Server struct {
 	Secrets      *secrets.Broker
 	Alerts       *alerts.Engine
 	Bus          *events.Bus
+	Scan         *scan.Runner
 	mux          *http.ServeMux
 	routes       []Route
 }
@@ -67,9 +70,10 @@ func NewWith(cfg *config.Config, svc *core.Service, hub *skills.Hub, d Deps) *Se
 	if d.E2E != nil && d.E2E.Scrub == nil {
 		d.E2E.Scrub = scrub.Scrub
 	}
-	s := &Server{Cfg: cfg, Core: svc, Skills: hub, GCP: d.GCP, E2E: d.E2E, Secrets: d.Secrets, Alerts: d.Alerts, Bus: d.Bus, mux: http.NewServeMux()}
+	s := &Server{Cfg: cfg, Core: svc, Skills: hub, GCP: d.GCP, E2E: d.E2E, Secrets: d.Secrets, Alerts: d.Alerts, Bus: d.Bus, Scan: d.Scan, mux: http.NewServeMux()}
 	s.registerCore()
 	s.registerV3()
+	s.registerScan()
 	return s
 }
 

@@ -80,6 +80,21 @@ func filterMatch(filter, haystack string) bool {
 	return strings.Contains(strings.ToLower(haystack), filter)
 }
 
+func fuzzyMatch(filter, haystack string) bool {
+	f := []rune(strings.ToLower(strings.TrimSpace(filter)))
+	if len(f) == 0 {
+		return true
+	}
+	h := []rune(strings.ToLower(haystack))
+	j := 0
+	for i := 0; i < len(h) && j < len(f); i++ {
+		if h[i] == f[j] {
+			j++
+		}
+	}
+	return j == len(f)
+}
+
 func sessionHaystack(v core.SessionView) string {
 	s := v.Session
 	return strings.Join([]string{s.Project, s.Name, string(s.Kind), string(s.Status), s.Command}, " ")

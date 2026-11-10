@@ -165,6 +165,28 @@ func RunStdio(cfg *config.Config) error {
 	mcp.AddTool(server, &mcp.Tool{Name: "events_recent", Description: "Recent daemon events (crashes, E2E, GCP errors)"}, func(ctx context.Context, req *mcp.CallToolRequest, args EmptyArgs) (*mcp.CallToolResult, any, error) {
 		return safeText(func() (string, error) { return t.EventsRecent() })
 	})
+	type scanArgs struct {
+		All     bool     `json:"all,omitempty"`
+		Refresh bool     `json:"refresh,omitempty"`
+		Paths   []string `json:"paths,omitempty"`
+	}
+	type addProjectArgs struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+	type removeProjectArgs struct {
+		Name         string `json:"name"`
+		KillSessions bool   `json:"kill_sessions,omitempty"`
+	}
+	mcp.AddTool(server, &mcp.Tool{Name: "scan_projects", Description: "List git repos from cache or a fresh scan (does not register projects)"}, func(ctx context.Context, req *mcp.CallToolRequest, args scanArgs) (*mcp.CallToolResult, any, error) {
+		return safeText(func() (string, error) { return t.ScanProjects(args.All, args.Refresh, args.Paths) })
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "add_project", Description: "Register a project directory (requires mcp.allow_mutations)"}, func(ctx context.Context, req *mcp.CallToolRequest, args addProjectArgs) (*mcp.CallToolResult, any, error) {
+		return safeText(func() (string, error) { return t.AddProject(args.Name, args.Path) })
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "remove_project", Description: "Unregister a project (requires mcp.allow_mutations)"}, func(ctx context.Context, req *mcp.CallToolRequest, args removeProjectArgs) (*mcp.CallToolResult, any, error) {
+		return safeText(func() (string, error) { return t.RemoveProject(args.Name, args.KillSessions) })
+	})
 
 	return server.Run(context.Background(), &mcp.StdioTransport{})
 }

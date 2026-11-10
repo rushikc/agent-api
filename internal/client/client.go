@@ -323,3 +323,41 @@ func (c *Client) EventsRecent() (json.RawMessage, error) {
 	err := c.do(http.MethodGet, "/v1/events", nil, &raw)
 	return raw, err
 }
+
+func (c *Client) ScanCache() (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := c.do(http.MethodGet, "/v1/scan", nil, &raw)
+	return raw, err
+}
+
+func (c *Client) ScanStart(body map[string]any) (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := c.do(http.MethodPost, "/v1/scan", body, &raw)
+	return raw, err
+}
+
+func (c *Client) ScanJob(id string) (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := c.long().do(http.MethodGet, "/v1/scan/"+id, nil, &raw)
+	return raw, err
+}
+
+func (c *Client) Projects() (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := c.do(http.MethodGet, "/v1/projects", nil, &raw)
+	return raw, err
+}
+
+func (c *Client) AddProject(name, path string) (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := c.do(http.MethodPost, "/v1/projects", map[string]string{"name": name, "path": path}, &raw)
+	return raw, err
+}
+
+func (c *Client) RemoveProject(name string, kill bool) error {
+	q := "/v1/projects/" + name
+	if kill {
+		q += "?kill_sessions=1"
+	}
+	return c.do(http.MethodDelete, q, nil, nil)
+}

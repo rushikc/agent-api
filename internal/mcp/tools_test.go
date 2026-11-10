@@ -62,6 +62,20 @@ func (f *fakeDaemon) SecretsList() (json.RawMessage, error) {
 	return json.RawMessage(`[{"name":"x","ok":true}]`), nil
 }
 func (f *fakeDaemon) EventsRecent() (json.RawMessage, error) { return json.RawMessage(`[]`), nil }
+func (f *fakeDaemon) ScanCache() (json.RawMessage, error) {
+	return json.RawMessage(`{"stale":false,"cache":{"repos":[]}}`), nil
+}
+func (f *fakeDaemon) ScanStart(body map[string]any) (json.RawMessage, error) {
+	return json.RawMessage(`{"id":"j1","status":"queued"}`), nil
+}
+func (f *fakeDaemon) ScanJob(id string) (json.RawMessage, error) {
+	return json.RawMessage(`{"id":"` + id + `","status":"done","result":{"repos":[]}}`), nil
+}
+func (f *fakeDaemon) Projects() (json.RawMessage, error) { return json.RawMessage(`{}`), nil }
+func (f *fakeDaemon) AddProject(name, path string) (json.RawMessage, error) {
+	return json.RawMessage(`{"name":"` + name + `"}`), nil
+}
+func (f *fakeDaemon) RemoveProject(name string, kill bool) error { return nil }
 
 func TestToolsMutationsAndScrub(t *testing.T) {
 	f := &fakeDaemon{logs: "AWS_TOKEN=supersecret\nready\n"}

@@ -35,6 +35,45 @@ func TestProjectPathRequiresDirectory(t *testing.T) {
 	}
 }
 
+func TestUniqueProjectNameAndRename(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Default().WithDir(dir)
+	cfg.Projects = map[string]string{"app": dir}
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.UniqueProjectName("app"); got != "app-2" {
+		t.Fatal(got)
+	}
+	if got := cfg.UniqueProjectName("other"); got != "other" {
+		t.Fatal(got)
+	}
+	other := t.TempDir()
+	if err := cfg.AddProject("other", other); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.RenameProject("other", "renamed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Projects["other"]; ok {
+		t.Fatal("old name")
+	}
+	name, ok := cfg.ProjectNameForPath(other)
+	if !ok || name != "renamed" {
+		t.Fatalf("%s %v", name, ok)
+	}
+}
+
+func TestDefaultScanFields(t *testing.T) {
+	cfg := Default()
+	if cfg.Scan.DepthDesktop != 6 || cfg.Scan.DepthAll != 10 || cfg.Scan.IncludeVolumes {
+		t.Fatalf("%+v", cfg.Scan)
+	}
+	if cfg.ScanCachePath() == "" {
+		t.Fatal("cache path")
+	}
+}
+
 func TestDefaultV2Fields(t *testing.T) {
 	cfg := Default()
 	if cfg.API.EnableTCP || cfg.API.TCPPort != 7420 {

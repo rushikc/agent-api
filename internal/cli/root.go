@@ -57,6 +57,8 @@ func newRoot() *cobra.Command {
 		newTopCmd(),
 		newProjectsUICmd(),
 		newProjectCmd(),
+		newScanCmd(),
+		newScanUICmd(),
 		newStatusCmd(),
 		newMonitorCmd(),
 		newJumpCmd(),
@@ -326,13 +328,8 @@ func newProjectCmd() *cobra.Command {
 		Short: "Register a project directory",
 		Args:  cobra.ExactArgs(2),
 		RunE: withServiceOpt(false, func(svc *core.Service, args []string) error {
-			if err := svc.Cfg.AddProject(args[0], args[1]); err != nil {
+			if err := svc.AddProject(args[0], args[1]); err != nil {
 				return err
-			}
-			if c := tryDaemon(svc.Cfg); c != nil {
-				if err := c.Reload(); err != nil {
-					return err
-				}
 			}
 			fmt.Printf("added project %s -> %s\n", args[0], svc.Cfg.Projects[args[0]])
 			return nil
@@ -402,11 +399,8 @@ func projectRm(svc *core.Service, name string, yes bool) error {
 		return fmt.Errorf("aborted")
 	}
 	_ = profile.Down(svc, name, true)
-	if err := svc.Cfg.RemoveProject(name); err != nil {
+	if err := svc.RemoveProject(name, false); err != nil {
 		return err
-	}
-	if c := tryDaemon(svc.Cfg); c != nil {
-		_ = c.Reload()
 	}
 	fmt.Println("removed", name)
 	return nil

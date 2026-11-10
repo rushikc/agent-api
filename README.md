@@ -68,7 +68,7 @@ devhub mcp install --cursor   # backup + merge ~/.cursor/mcp.json; other servers
 
 That adds `{ "mcpServers": { "devhub": { "command": "<abs devhub>", "args": ["mcp"] } } }`. `devhub mcp` is a stdio server that proxies through the local API. Mutations follow `mcp.allow_mutations` (default true). `free_port` needs `mcp.allow_port_kill` (default false). `read_logs` scrubs secrets (AWS keys, PEM, Bearer, `*_SECRET=`, `*_TOKEN=`, GCP service accounts, plus exact values from the secrets broker).
 
-GCP MCP tools: `gcp_list_projects`, `gcp_logs`, `gcp_bq_query`, `gcp_run_status`, `gcp_pubsub_peek`, `gcp_gcs_list`. Prod aliases with `require_confirm` are refused over MCP unless `gcp.allow_prod_via_mcp` is true. E2E: `e2e_run`, `e2e_status`, `e2e_failures`, `e2e_logs`. `secrets_list` returns names only. `events_recent` lists crashes and failures.
+GCP MCP tools: `gcp_list_projects`, `gcp_logs`, `gcp_bq_query`, `gcp_run_status`, `gcp_pubsub_peek`, `gcp_gcs_list`. Prod aliases with `require_confirm` are refused over MCP unless `gcp.allow_prod_via_mcp` is true. E2E: `e2e_run`, `e2e_status`, `e2e_failures`, `e2e_logs`. `secrets_list` returns names only. `events_recent` lists crashes and failures. Project scan: `scan_projects` (read-only), `add_project` / `remove_project` (mutations).
 
 ## Skills and rules
 
@@ -236,6 +236,12 @@ Every pane gets `DEVHUB_PROJECT` and `DEVHUB_COLOR`. The prompt shows a coloured
 devhub project add krayon ~/code/krayon
 devhub project ls
 
+devhub scan projects              # ~/Desktop, then picker
+devhub scan                       # same
+devhub scan projects --all        # home (add --include-volumes for /Volumes)
+devhub scan projects --no-ui
+devhub scan projects --json --refresh
+
 devhub new --project krayon          # starts in the krayon directory
 devhub new --project krayon --name v3
 
@@ -255,6 +261,7 @@ devhub picker      # active terminals
 devhub shadows     # background processes
 devhub top         # CPU / RAM
 devhub projects    # switch project session
+devhub scan-ui     # project scanner picker (cache)
 devhub skills-ui   # skills / rules
 devhub janitor     # ports / orphans
 devhub updown      # profile up / down
@@ -274,7 +281,8 @@ macOS never sends a bare Option press, so Option+key requires the terminal to tr
 | `M-s` / `prefix s` | Fuzzy list of **active** terminals. Enter switches, `n` new, `r` rename, `x` kill (confirm). |
 | `M-h` / `prefix h` | **Shadow** list. Enter peek (live tail), `R` restart, `x` kill, `a` add, `o` promote. Restart count is shown. |
 | `M-r` / `prefix r` | Live **top** table (2s). `c` sort CPU, `m` sort memory. |
-| `M-p` / `prefix p` | Project switcher |
+| `M-p` / `prefix p` | Project switcher (`x` remove, `e` rename, `+` scan) |
+| `M-P` / `prefix P` | Scan picker (checkbox add/remove; `r` Desktop, `R` --all) |
 | `M-k` / `prefix k` | Skills / rules (`c` copy, `e` edit, `s` sync, `d` doctor) |
 | `M-o` / `prefix o` | Janitor (tab Ports/Orphans, `x` kill, `a` adopt) |
 | `M-u` / `prefix u` | Profile up / down |
@@ -328,6 +336,12 @@ gcp:
 e2e:
   concurrency: 2
   retention: 7d
+scan:
+  roots: []
+  exclude: []
+  depth_desktop: 6
+  depth_all: 10
+  include_volumes: false
 alerts:
   quiet_hours: { start: "23:00", end: "08:00", location: Asia/Kolkata }
   rules: []
@@ -335,7 +349,7 @@ alerts:
 
 If Starship is detected, `devhub shell install` prints an `env_var.DEVHUB_PROJECT` module snippet instead of editing `PROMPT`.
 
-Data files: `~/.devhub/devhub.db`, `~/.devhub/status.json`, `~/.devhub/tmux.conf`, `~/.devhub/shell/devhub.zsh`, `~/.devhub/devhub.sock`, `~/.devhub/daemon.pid`, `~/.devhub/token`, `~/.devhub/logs/daemon.log`, `~/.devhub/skills/`.
+Data files: `~/.devhub/devhub.db`, `~/.devhub/status.json`, `~/.devhub/tmux.conf`, `~/.devhub/shell/devhub.zsh`, `~/.devhub/devhub.sock`, `~/.devhub/daemon.pid`, `~/.devhub/token`, `~/.devhub/logs/daemon.log`, `~/.devhub/skills/`, `~/.devhub/scan-cache.json`.
 
 ## Develop
 

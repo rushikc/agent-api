@@ -23,6 +23,8 @@ func TestRenderTmuxConf(t *testing.T) {
 		"set-option -g prefix C-Space",
 		"bind-key -n M-s display-popup",
 		"bind-key -n M-p display-popup",
+		"bind-key -n M-P display-popup",
+		"devhub scan-ui",
 		"bind-key -n M-1 run-shell",
 		"devhub picker",
 		"devhub shadows",

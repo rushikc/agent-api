@@ -37,6 +37,10 @@ func TestV3ToolRequiredFields(t *testing.T) {
 		{E2ERunArgs{}, "project"},
 		{E2EIDArgs{}, "id"},
 		{EmptyArgs{}, ""},
+		{struct {
+			Name string `json:"name"`
+			Path string `json:"path"`
+		}{}, "name,path"},
 	}
 	for _, tc := range cases {
 		got := strings.Join(requiredJSON(t, tc.v), ",")

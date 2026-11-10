@@ -23,6 +23,7 @@ import (
 	"github.com/rushikesh/devhub/internal/gcp"
 	"github.com/rushikesh/devhub/internal/monitor"
 	"github.com/rushikesh/devhub/internal/profile"
+	"github.com/rushikesh/devhub/internal/scan"
 	"github.com/rushikesh/devhub/internal/secrets"
 	"github.com/rushikesh/devhub/internal/skills"
 )
@@ -61,7 +62,8 @@ func Run(cfg *config.Config, svc *core.Service) error {
 		return profile.EnvForProject(cfg, project)
 	}
 
-	srv := api.NewWith(cfg, svc, hub, api.Deps{GCP: gw, E2E: eq, Secrets: sec, Alerts: al, Bus: bus})
+	sc := scan.NewRunner(cfg)
+	srv := api.NewWith(cfg, svc, hub, api.Deps{GCP: gw, E2E: eq, Secrets: sec, Alerts: al, Bus: bus, Scan: sc})
 	tok, _ := api.EnsureToken(cfg)
 	srv.Token = tok
 

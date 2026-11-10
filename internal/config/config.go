@@ -170,39 +170,7 @@ func Load() (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
-	if cfg.Prefix == "" {
-		cfg.Prefix = DefaultPrefix
-	}
-	if cfg.Keys.Mode == "" {
-		cfg.Keys.Mode = "both"
-	}
-	if cfg.Projects == nil {
-		cfg.Projects = map[string]string{}
-	}
-	if cfg.ProjectColors == nil {
-		cfg.ProjectColors = map[string]string{}
-	}
-	if cfg.DefaultShadowCommands == nil {
-		cfg.DefaultShadowCommands = map[string][]string{}
-	}
-	if cfg.API.TCPPort == 0 {
-		cfg.API.TCPPort = 7420
-	}
-	if len(cfg.Skills.Targets) == 0 {
-		cfg.Skills.Targets = []string{"cursor"}
-	}
-	if len(cfg.Janitor.ProcessNames) == 0 {
-		cfg.Janitor.ProcessNames = Default().Janitor.ProcessNames
-	}
-	if cfg.GCP.RateLimitPerMin <= 0 {
-		cfg.GCP.RateLimitPerMin = 30
-	}
-	if cfg.E2E.Concurrency <= 0 {
-		cfg.E2E.Concurrency = 2
-	}
-	if cfg.E2E.Retention == "" {
-		cfg.E2E.Retention = "7d"
-	}
+	cfg.normalize()
 	cfg.dir = dir
 	cfg.path = path
 	return cfg, nil
@@ -338,6 +306,85 @@ func (c *Config) ColorFor(project string) string {
 	return HashColor(project)
 }
 
+func CanonPath(p string) string {
+	expanded, err := ExpandPath(p)
+	if err != nil {
+		return filepath.Clean(p)
+	}
+	expanded = filepath.Clean(expanded)
+	if resolved, err := filepath.EvalSymlinks(expanded); err == nil {
+		return filepath.Clean(resolved)
+	}
+	dir, suffix := expanded, ""
+	for {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Clean(filepath.Join(resolved, suffix))
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		suffix = filepath.Join(filepath.Base(dir), suffix)
+		dir = parent
+	}
+	return expanded
+}
+
+func (c *Config) Reload() error {
+	if c.path == "" {
+		return fmt.Errorf("config path is not set")
+	}
+	data, err := os.ReadFile(c.path)
+	if err != nil {
+		return err
+	}
+	next := Default()
+	if err := yaml.Unmarshal(data, next); err != nil {
+		return fmt.Errorf("parse config: %w", err)
+	}
+	next.normalize()
+	next.dir = c.dir
+	next.path = c.path
+	*c = *next
+	return nil
+}
+
+func (c *Config) normalize() {
+	if c.Prefix == "" {
+		c.Prefix = DefaultPrefix
+	}
+	if c.Keys.Mode == "" {
+		c.Keys.Mode = "both"
+	}
+	if c.Projects == nil {
+		c.Projects = map[string]string{}
+	}
+	if c.ProjectColors == nil {
+		c.ProjectColors = map[string]string{}
+	}
+	if c.DefaultShadowCommands == nil {
+		c.DefaultShadowCommands = map[string][]string{}
+	}
+	if c.API.TCPPort == 0 {
+		c.API.TCPPort = 7420
+	}
+	if len(c.Skills.Targets) == 0 {
+		c.Skills.Targets = []string{"cursor"}
+	}
+	if len(c.Janitor.ProcessNames) == 0 {
+		c.Janitor.ProcessNames = Default().Janitor.ProcessNames
+	}
+	if c.GCP.RateLimitPerMin <= 0 {
+		c.GCP.RateLimitPerMin = 30
+	}
+	if c.E2E.Concurrency <= 0 {
+		c.E2E.Concurrency = 2
+	}
+	if c.E2E.Retention == "" {
+		c.E2E.Retention = "7d"
+	}
+}
+
 func (c *Config) ProjectPath(name string) (string, error) {
 	p, ok := c.Projects[name]
 	if !ok {
@@ -354,7 +401,7 @@ func (c *Config) ProjectPath(name string) (string, error) {
 	if !info.IsDir() {
 		return "", fmt.Errorf("project %q path %s is not a directory", name, expanded)
 	}
-	return expanded, nil
+	return CanonPath(expanded), nil
 }
 
 func (c *Config) AddProject(name, path string) error {
@@ -368,7 +415,11 @@ func (c *Config) AddProject(name, path string) error {
 	}
 	info, err := os.Stat(expanded)
 	if err != nil {
-		return fmt.Errorf("path %s: %w", expanded, err)
+		msg := fmt.Sprintf("path %s: %v", expanded, err)
+		if hints := SuggestNearby(expanded); len(hints) > 0 {
+			msg += "\nDid you mean " + strings.Join(hints, ", ") + "?"
+		}
+		return fmt.Errorf("%s", msg)
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("path %s is not a directory", expanded)
@@ -376,8 +427,35 @@ func (c *Config) AddProject(name, path string) error {
 	if c.Projects == nil {
 		c.Projects = map[string]string{}
 	}
-	c.Projects[name] = expanded
+	c.Projects[name] = CanonPath(expanded)
 	return c.Save()
+}
+
+func SuggestNearby(path string) []string {
+	parent := filepath.Dir(path)
+	base := filepath.Base(path)
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return nil
+	}
+	var hints []string
+	lower := strings.ToLower(base)
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		n := e.Name()
+		if n == base {
+			continue
+		}
+		if strings.EqualFold(n, base) || strings.Contains(strings.ToLower(n), lower) || strings.Contains(lower, strings.ToLower(n)) {
+			hints = append(hints, n)
+		}
+	}
+	if len(hints) > 5 {
+		hints = hints[:5]
+	}
+	return hints
 }
 
 func ExpandPath(p string) (string, error) {

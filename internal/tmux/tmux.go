@@ -7,13 +7,13 @@ import (
 )
 
 const (
-	SocketName     = "devhub"
-	MinMajor       = 3
-	MinMinor       = 3
-	MainSession    = "dh-main"
-	SessionPrefix  = "dh-"
-	ShadowPrefix   = "dh-shadow-"
-	MainWindow     = "main"
+	SocketName    = "devhub"
+	MinMajor      = 3
+	MinMinor      = 3
+	MainSession   = "dh-main"
+	SessionPrefix = "dh-"
+	ShadowPrefix  = "dh-shadow-"
+	MainWindow    = "main"
 )
 
 type SessionOpts struct {
@@ -76,7 +76,6 @@ type Client interface {
 	CurrentSession() (string, error)
 	SetRemainOnExit(target string, on bool) error
 	SetEnvironment(target, key, value string) error
-	SetDefaultPath(session, path string) error
 	SetUserOption(target, key, value string) error
 	RespawnPane(opts RespawnOpts) error
 	HasPane(target string) (bool, error)

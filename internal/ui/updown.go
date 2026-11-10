@@ -67,7 +67,7 @@ func (m updownModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "d":
 			if m.cursor < len(m.profiles) {
 				p := m.profiles[m.cursor]
-				if err := profile.Down(m.svc, p.Name); err != nil {
+				if err := profile.Down(m.svc, p.Name, false); err != nil {
 					m.err = err.Error()
 				} else {
 					m.log = "down " + p.Name

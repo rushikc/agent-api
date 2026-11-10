@@ -9,6 +9,13 @@ import (
 	"github.com/rushikesh/devhub/internal/registry"
 )
 
+func ShouldRestart(sess registry.Session, policy string) bool {
+	if sess.Status == registry.StatusStopped || sess.Status == registry.StatusRunning {
+		return false
+	}
+	return policy == "on-failure" || policy == "always"
+}
+
 func Supervise(ctx context.Context, svc *core.Service) {
 	tick := time.NewTicker(3 * time.Second)
 	defer tick.Stop()
@@ -35,10 +42,9 @@ func Supervise(ctx context.Context, svc *core.Service) {
 					if err != nil {
 						continue
 					}
-					if sess.Status == registry.StatusRunning {
-						seenExit[sess.ID] = false
-						if sh.Restart != "always" {
-							continue
+					if !ShouldRestart(sess, sh.Restart) {
+						if sess.Status == registry.StatusRunning {
+							seenExit[sess.ID] = false
 						}
 						continue
 					}

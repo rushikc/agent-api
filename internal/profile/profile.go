@@ -238,10 +238,13 @@ func Up(svc *core.Service, pr *Profile, autoFree bool) ([]UpResult, error) {
 	for _, sh := range ordered {
 		cwd := absCwd(pr.Path, sh.Cwd)
 		if sh.Port > 0 {
-			if p, taken := janitor.PortTaken(sh.Port, sessions, nil); taken {
+			if p, taken := portTakenFn(sh.Port, sessions, nil); taken {
 				svc.Emit("port.conflict", fmt.Sprintf("%s:%d", pr.Name, sh.Port), pr.Name, map[string]any{"port": sh.Port, "pid": p.PID, "owner": p.Owner})
 				if autoFree {
-					_ = janitor.KillTree(p.PID)
+					if !ShouldFreePort(p, pr.Name, sessions) {
+						return results, fmt.Errorf("port %d in use by %s (pid %d); not killing a foreign process", sh.Port, p.Owner, p.PID)
+					}
+					_ = killTreeFn(p.PID)
 				} else {
 					return results, fmt.Errorf("port %d in use by %s (pid %d); pass -y to free", sh.Port, p.Owner, p.PID)
 				}
@@ -297,7 +300,30 @@ func waitReady(svc *core.Service, sess registry.Session, sh Shadow) error {
 	return fmt.Errorf("not ready after %s", timeout)
 }
 
-func Down(svc *core.Service, project string) error {
+var (
+	portTakenFn = janitor.PortTaken
+	killTreeFn  = janitor.KillTree
+)
+
+func ShouldFreePort(p janitor.Port, project string, sessions []registry.Session) bool {
+	if p.Project == project || strings.HasPrefix(p.Owner, project+"/") {
+		return true
+	}
+	for _, s := range sessions {
+		if s.Project != project {
+			continue
+		}
+		if s.ID == p.SessionID && s.ID != 0 {
+			return true
+		}
+		if s.PanePID == int(p.PID) && s.Status != registry.StatusRunning {
+			return true
+		}
+	}
+	return false
+}
+
+func Down(svc *core.Service, project string, all bool) error {
 	rows, err := svc.DB.List(true)
 	if err != nil {
 		return err
@@ -306,10 +332,13 @@ func Down(svc *core.Service, project string) error {
 		if r.Project != project {
 			continue
 		}
-		if r.PanePID > 0 {
-			_ = janitor.KillTree(int32(r.PanePID))
+		if !all && r.Kind != registry.KindShadow {
+			continue
 		}
-		_ = svc.Kill(fmt.Sprintf("%s/%s", r.Project, r.Name))
+		if r.PanePID > 0 {
+			_ = killTreeFn(int32(r.PanePID))
+		}
+		_ = svc.Stop(fmt.Sprintf("%s/%s", r.Project, r.Name))
 	}
 	return nil
 }
@@ -322,7 +351,11 @@ func Init(dir string) (*Profile, error) {
 		}
 		_ = json.Unmarshal(b, &pkg)
 		if _, ok := pkg.Scripts["dev"]; ok {
-			pr.Shadows = append(pr.Shadows, Shadow{Name: "web", Command: "npm run dev", Cwd: ".", Port: 3000, Restart: "on-failure"})
+			port := DetectPort(dir)
+			if port == 0 {
+				port = 3000
+			}
+			pr.Shadows = append(pr.Shadows, Shadow{Name: "web", Command: "npm run dev", Cwd: ".", Port: port, Restart: "on-failure"})
 		}
 	}
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {

@@ -9,15 +9,10 @@ import (
 	"github.com/rushikesh/devhub/internal/daemon"
 )
 
-type strArgs struct {
-	Project string `json:"project,omitempty"`
-	Kind    string `json:"kind,omitempty"`
-	Command string `json:"command,omitempty"`
+type StartShadowArgs struct {
+	Project string `json:"project"`
+	Command string `json:"command"`
 	Name    string `json:"name,omitempty"`
-	Grep    string `json:"grep,omitempty"`
-	ID      int64  `json:"id,omitempty"`
-	Lines   int    `json:"lines,omitempty"`
-	Port    int    `json:"port,omitempty"`
 }
 
 func RunStdio(cfg *config.Config) error {
@@ -26,55 +21,74 @@ func RunStdio(cfg *config.Config) error {
 	t := &Tools{C: c, Cfg: cfg}
 	server := mcp.NewServer(&mcp.Implementation{Name: "devhub", Version: "3.0.0"}, nil)
 
-	add := func(name, desc string, fn func(context.Context, *mcp.CallToolRequest, strArgs) (*mcp.CallToolResult, any, error)) {
-		mcp.AddTool(server, &mcp.Tool{Name: name, Description: desc}, fn)
+	type listSessionsArgs struct {
+		Project string `json:"project,omitempty"`
+		Kind    string `json:"kind,omitempty"`
+	}
+	type startShadowArgs = StartShadowArgs
+	type idArgs struct {
+		ID int64 `json:"id"`
+	}
+	type logsArgs struct {
+		ID    int64  `json:"id"`
+		Lines int    `json:"lines,omitempty"`
+		Grep  string `json:"grep,omitempty"`
+	}
+	type portArgs struct {
+		Port int `json:"port"`
+	}
+	type projectArgs struct {
+		Project string `json:"project"`
+	}
+	type nameArgs struct {
+		Name string `json:"name"`
 	}
 
-	add("list_sessions", "List devhub sessions", func(ctx context.Context, req *mcp.CallToolRequest, args strArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "list_sessions", Description: "List devhub sessions"}, func(ctx context.Context, req *mcp.CallToolRequest, args listSessionsArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.ListSessions(args.Project, args.Kind)
 		return textResult(s, err)
 	})
-	add("start_shadow", "Start a shadow process", func(ctx context.Context, req *mcp.CallToolRequest, args strArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "start_shadow", Description: "Start a shadow process"}, func(ctx context.Context, req *mcp.CallToolRequest, args startShadowArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.StartShadow(args.Project, args.Command)
 		return textResult(s, err)
 	})
-	add("restart_session", "Restart a session by id", func(ctx context.Context, req *mcp.CallToolRequest, args strArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "restart_session", Description: "Restart a session by id"}, func(ctx context.Context, req *mcp.CallToolRequest, args idArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.RestartSession(args.ID)
 		return textResult(s, err)
 	})
-	add("stop_session", "Stop a session by id", func(ctx context.Context, req *mcp.CallToolRequest, args strArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "stop_session", Description: "Stop a session by id"}, func(ctx context.Context, req *mcp.CallToolRequest, args idArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.StopSession(args.ID)
 		return textResult(s, err)
 	})
-	add("read_logs", "Read session logs (secrets scrubbed)", func(ctx context.Context, req *mcp.CallToolRequest, args strArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "read_logs", Description: "Read session logs (secrets scrubbed)"}, func(ctx context.Context, req *mcp.CallToolRequest, args logsArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.ReadLogs(args.ID, args.Lines, args.Grep)
 		return textResult(s, err)
 	})
-	add("get_stats", "Resource snapshot", func(ctx context.Context, req *mcp.CallToolRequest, args strArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "get_stats", Description: "Resource snapshot"}, func(ctx context.Context, req *mcp.CallToolRequest, args struct{}) (*mcp.CallToolResult, any, error) {
 		s, err := t.GetStats()
 		return textResult(s, err)
 	})
-	add("list_ports", "Listening TCP ports", func(ctx context.Context, req *mcp.CallToolRequest, args strArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "list_ports", Description: "Listening TCP ports"}, func(ctx context.Context, req *mcp.CallToolRequest, args struct{}) (*mcp.CallToolResult, any, error) {
 		s, err := t.ListPorts()
 		return textResult(s, err)
 	})
-	add("free_port", "Free a TCP port (requires mcp.allow_port_kill)", func(ctx context.Context, req *mcp.CallToolRequest, args strArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "free_port", Description: "Free a TCP port (requires mcp.allow_port_kill)"}, func(ctx context.Context, req *mcp.CallToolRequest, args portArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.FreePort(args.Port)
 		return textResult(s, err)
 	})
-	add("profile_up", "Start a project profile", func(ctx context.Context, req *mcp.CallToolRequest, args strArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "profile_up", Description: "Start a project profile"}, func(ctx context.Context, req *mcp.CallToolRequest, args projectArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.ProfileUp(args.Project)
 		return textResult(s, err)
 	})
-	add("profile_down", "Stop a project profile", func(ctx context.Context, req *mcp.CallToolRequest, args strArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "profile_down", Description: "Stop a project profile"}, func(ctx context.Context, req *mcp.CallToolRequest, args projectArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.ProfileDown(args.Project)
 		return textResult(s, err)
 	})
-	add("list_skills", "List skills and rules", func(ctx context.Context, req *mcp.CallToolRequest, args strArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "list_skills", Description: "List skills and rules"}, func(ctx context.Context, req *mcp.CallToolRequest, args struct{}) (*mcp.CallToolResult, any, error) {
 		s, err := t.ListSkills()
 		return textResult(s, err)
 	})
-	add("get_skill", "Get a skill or rule by name", func(ctx context.Context, req *mcp.CallToolRequest, args strArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "get_skill", Description: "Get a skill or rule by name"}, func(ctx context.Context, req *mcp.CallToolRequest, args nameArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.GetSkill(args.Name)
 		return textResult(s, err)
 	})

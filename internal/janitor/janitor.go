@@ -18,23 +18,23 @@ import (
 )
 
 type Port struct {
-	Port     int    `json:"port"`
-	PID      int32  `json:"pid"`
-	Cmd      string `json:"cmd"`
-	Owner    string `json:"owner"` // session ref or "external"
-	Project  string `json:"project,omitempty"`
-	Name     string `json:"name,omitempty"`
-	SessionID int64 `json:"session_id,omitempty"`
+	Port      int    `json:"port"`
+	PID       int32  `json:"pid"`
+	Cmd       string `json:"cmd"`
+	Owner     string `json:"owner"` // session ref or "external"
+	Project   string `json:"project,omitempty"`
+	Name      string `json:"name,omitempty"`
+	SessionID int64  `json:"session_id,omitempty"`
 }
 
 type Orphan struct {
-	PID     int32  `json:"pid"`
-	Name    string `json:"name"`
-	Cwd     string `json:"cwd"`
+	PID     int32   `json:"pid"`
+	Name    string  `json:"name"`
+	Cwd     string  `json:"cwd"`
 	CPUPct  float64 `json:"cpu_pct"`
-	RSS     uint64 `json:"rss_bytes"`
-	Age     string `json:"age"`
-	Project string `json:"project"`
+	RSS     uint64  `json:"rss_bytes"`
+	Age     string  `json:"age"`
+	Project string  `json:"project"`
 }
 
 var denyNames = map[string]bool{
@@ -208,41 +208,140 @@ func projectForCwd(cfg *config.Config, cwd string) string {
 	if cwd == "" {
 		return ""
 	}
+	canon := config.CanonPath(cwd)
 	for name, p := range cfg.Projects {
-		abs, err := config.ExpandPath(p)
-		if err != nil {
+		abs := config.CanonPath(p)
+		if abs == "" {
 			continue
 		}
-		if cwd == abs || strings.HasPrefix(cwd, abs+string(os.PathSeparator)) {
+		if canon == abs || strings.HasPrefix(canon, abs+string(os.PathSeparator)) {
 			return name
 		}
 	}
 	return ""
 }
 
-func KillTree(pid int32) error {
+type TreeKiller interface {
+	Children(pid int32) ([]int32, error)
+	Name(pid int32) string
+	UID(pid int32) uint32
+	Signal(pid int32, sig syscall.Signal) error
+	Running(pid int32) bool
+}
+
+type liveKiller struct{}
+
+func (liveKiller) Children(pid int32) ([]int32, error) {
+	p, err := process.NewProcess(pid)
+	if err != nil {
+		return nil, err
+	}
+	kids, err := p.Children()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]int32, 0, len(kids))
+	for _, k := range kids {
+		if k != nil {
+			out = append(out, k.Pid)
+		}
+	}
+	return out, nil
+}
+
+func (liveKiller) Name(pid int32) string {
+	p, err := process.NewProcess(pid)
+	if err != nil {
+		return ""
+	}
+	n, _ := p.Name()
+	return n
+}
+
+func (liveKiller) UID(pid int32) uint32 {
+	p, err := process.NewProcess(pid)
+	if err != nil {
+		return 0
+	}
+	uids, _ := p.Uids()
+	if len(uids) == 0 {
+		return 0
+	}
+	return uint32(uids[0])
+}
+
+func (liveKiller) Signal(pid int32, sig syscall.Signal) error {
 	p, err := process.NewProcess(pid)
 	if err != nil {
 		return err
 	}
-	name, _ := p.Name()
-	uids, _ := p.Uids()
-	var uid uint32
-	if len(uids) > 0 {
-		uid = uint32(uids[0])
+	if sig == syscall.SIGKILL {
+		return p.Kill()
 	}
-	if err := CanKill(pid, name, uid, SelfUID()); err != nil {
+	return p.SendSignal(sig)
+}
+
+func (liveKiller) Running(pid int32) bool {
+	p, err := process.NewProcess(pid)
+	if err != nil {
+		return false
+	}
+	ok, _ := p.IsRunning()
+	return ok
+}
+
+func KillTree(pid int32) error {
+	return KillTreeWith(pid, liveKiller{}, 10*time.Second)
+}
+
+func KillTreeWith(pid int32, k TreeKiller, wait time.Duration) error {
+	if k == nil {
+		k = liveKiller{}
+	}
+	if wait <= 0 {
+		wait = 10 * time.Second
+	}
+	if err := CanKill(pid, k.Name(pid), k.UID(pid), SelfUID()); err != nil {
 		return err
 	}
-	_ = p.SendSignal(syscall.SIGTERM)
-	deadline := time.Now().Add(5 * time.Second)
+	var order []int32
+	seen := map[int32]bool{}
+	var visit func(int32)
+	visit = func(p int32) {
+		if p <= 0 || seen[p] {
+			return
+		}
+		seen[p] = true
+		kids, _ := k.Children(p)
+		for _, c := range kids {
+			visit(c)
+		}
+		order = append(order, p)
+	}
+	visit(pid)
+	for _, p := range order {
+		_ = k.Signal(p, syscall.SIGTERM)
+	}
+	deadline := time.Now().Add(wait)
 	for time.Now().Before(deadline) {
-		if running, _ := p.IsRunning(); !running {
+		any := false
+		for _, p := range order {
+			if k.Running(p) {
+				any = true
+				break
+			}
+		}
+		if !any {
 			return nil
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
-	return p.Kill()
+	for _, p := range order {
+		if k.Running(p) {
+			_ = k.Signal(p, syscall.SIGKILL)
+		}
+	}
+	return nil
 }
 
 func FreePort(port int, sessions []registry.Session, src monitor.ProcSource) error {

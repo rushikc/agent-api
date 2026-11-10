@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/rushikesh/devhub/internal/config"
 )
 
 type CursorAdapter struct{ Home string }
@@ -43,8 +45,11 @@ func (a CursorAdapter) Sync(h *Hub, items []Item, dry bool) ([]string, error) {
 			}())
 			if it.Rule.Scope == "global" || it.Rule.Scope == "" {
 				for _, repo := range h.Cfg.Projects {
-					abs, err := filepath.Abs(repo)
-					if err != nil {
+					abs := configCanon(repo)
+					if abs == "" {
+						continue
+					}
+					if st, err := os.Stat(abs); err != nil || !st.IsDir() {
 						continue
 					}
 					dst := filepath.Join(abs, ".cursor", "rules", "dh-global-"+it.Name+".mdc")
@@ -187,4 +192,8 @@ func upsertBlock(path, inner string, dry bool) error {
 		s += "\n" + block
 	}
 	return os.WriteFile(path, []byte(s), 0o644)
+}
+
+func configCanon(p string) string {
+	return config.CanonPath(p)
 }

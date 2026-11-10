@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rushikesh/devhub/internal/config"
+	"gopkg.in/yaml.v3"
 )
 
 type Item struct {
@@ -122,6 +123,67 @@ func (h *Hub) Get(name string) (Item, error) {
 		}
 	}
 	return Item{}, fmt.Errorf("unknown skill/rule %s", name)
+}
+
+func (h *Hub) SetEnabled(name string, enabled bool) error {
+	it, err := h.Get(name)
+	if err != nil {
+		return err
+	}
+	fm, content, err := SplitFrontmatter(it.Body)
+	if err != nil {
+		return err
+	}
+	fm["enabled"] = enabled
+	raw, err := yaml.Marshal(fm)
+	if err != nil {
+		return err
+	}
+	body := "---\n" + string(raw) + "---\n" + content
+	if err := os.WriteFile(it.Path, []byte(body), 0o644); err != nil {
+		return err
+	}
+	h.commit("enable skill " + name)
+	return nil
+}
+
+func (h *Hub) Add(src string) error {
+	src = strings.TrimSpace(src)
+	if src == "" {
+		return fmt.Errorf("path or git url is required")
+	}
+	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") || strings.HasPrefix(src, "git@") {
+		tmp, err := os.MkdirTemp("", "devhub-skill-*")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(tmp)
+		cmd := exec.Command("git", "clone", "--depth", "1", src, tmp)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git clone: %s: %w", bytesTrim(out), err)
+		}
+		src = tmp
+	}
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		p := filepath.Join(src, "SKILL.md")
+		if _, err := os.Stat(p); err != nil {
+			return fmt.Errorf("%s has no SKILL.md", src)
+		}
+		return h.ImportFile(p, filepath.Base(src))
+	}
+	return h.ImportFile(src, "")
+}
+
+func bytesTrim(b []byte) string {
+	s := strings.TrimSpace(string(b))
+	if len(s) > 200 {
+		return s[:200]
+	}
+	return s
 }
 
 func (h *Hub) NewSkill(name, scope string) (string, error) {

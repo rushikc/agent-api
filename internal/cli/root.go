@@ -83,6 +83,7 @@ func newRoot() *cobra.Command {
 		newGCPUICmd(),
 		newE2EUICmd(),
 		newAlertsUICmd(),
+		newReloadCmd(),
 	)
 	return cmd
 }
@@ -106,6 +107,12 @@ func withServiceOpt(needTmux bool, fn func(*core.Service, []string) error) func(
 			return err
 		}
 		defer svc.Close()
+		if c := tryDaemon(cfg); c != nil {
+			svc.Remote = c
+		}
+		if svc.KeybindingsStale() {
+			_ = svc.ApplyKeybindingsForce(true)
+		}
 		if needTmux {
 			if err := svc.Tmux.EnsureServer(); err != nil {
 				return err
@@ -322,12 +329,15 @@ func newProjectCmd() *cobra.Command {
 				fmt.Println("no projects (devhub project add <name> <path>)")
 				return nil
 			}
-			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tPATH")
+			var rows [][]string
 			for n, p := range svc.Cfg.Projects {
-				fmt.Fprintf(w, "%s\t%s\n", n, p)
+				mark := ""
+				if _, err := os.Stat(p); err != nil {
+					mark = " (missing)"
+				}
+				rows = append(rows, []string{n, p + mark})
 			}
-			return w.Flush()
+			return printTable(os.Stdout, []string{"NAME", "PATH"}, rows)
 		}),
 	})
 	return cmd

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,6 +24,34 @@ import (
 
 func withCaller(kind string) {
 	_ = os.Setenv("DEVHUB_CALLER", kind)
+}
+
+func printJSON(v any) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
+}
+
+func skillEnable(on bool) func(*cobra.Command, []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		hub, err := skills.Open(cfg)
+		if err != nil {
+			return err
+		}
+		if err := hub.SetEnabled(args[0], on); err != nil {
+			return err
+		}
+		state := "disabled"
+		if on {
+			state = "enabled"
+		}
+		fmt.Println(args[0], state)
+		return nil
+	}
 }
 
 func tryDaemon(cfg *config.Config) *client.Client {
@@ -140,7 +169,7 @@ func newMCPCmd() *cobra.Command {
 			return mcp.RunStdio(cfg)
 		},
 	}
-	var cursor bool
+	var cursor, dry bool
 	inst := &cobra.Command{
 		Use:   "install",
 		Short: "Merge the server into an MCP client config",
@@ -148,15 +177,24 @@ func newMCPCmd() *cobra.Command {
 			if !cursor {
 				return fmt.Errorf("pass --cursor")
 			}
-			path, err := mcp.InstallCursor(mcp.MustExe())
+			path, err := mcp.CursorMCPPath()
 			if err != nil {
 				return err
+			}
+			diff, err := mcp.InstallCursorAt(path, mcp.MustExe(), dry)
+			if err != nil {
+				return err
+			}
+			if dry {
+				fmt.Print(diff)
+				return nil
 			}
 			fmt.Println("updated", path)
 			return nil
 		},
 	}
 	inst.Flags().BoolVar(&cursor, "cursor", false, "merge ~/.cursor/mcp.json")
+	inst.Flags().BoolVar(&dry, "dry-run", false, "print a unified diff without writing")
 	cmd.AddCommand(inst)
 	return cmd
 }
@@ -166,21 +204,14 @@ func newSkillsCmd() *cobra.Command {
 		Use:   "skills",
 		Short: "Skills hub",
 	}
-	cmd.AddCommand(&cobra.Command{
+	var lsJSON bool
+	ls := &cobra.Command{
 		Use:   "ls",
 		Short: "List skills and rules",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
 				return err
-			}
-			if c := tryDaemon(cfg); c != nil {
-				b, err := c.Skills()
-				if err != nil {
-					return err
-				}
-				fmt.Println(string(b))
-				return nil
 			}
 			hub, err := skills.Open(cfg)
 			if err != nil {
@@ -190,15 +221,20 @@ func newSkillsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "KIND\tNAME\tSCOPE\tENABLED")
-			for _, it := range items {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%v\n", it.Kind, it.Name, it.Scope, it.Enabled)
+			if lsJSON {
+				return printJSON(items)
 			}
-			return w.Flush()
+			var rows [][]string
+			for _, it := range items {
+				rows = append(rows, []string{it.Kind, it.Name, it.Scope, fmt.Sprintf("%v", it.Enabled)})
+			}
+			return printTable(os.Stdout, []string{"KIND", "NAME", "SCOPE", "ENABLED"}, rows)
 		},
-	})
-	cmd.AddCommand(&cobra.Command{
+	}
+	ls.Flags().BoolVar(&lsJSON, "json", false, "raw JSON")
+	cmd.AddCommand(ls)
+	var newScope string
+	newCmd := &cobra.Command{
 		Use:   "new <name>",
 		Args:  cobra.ExactArgs(1),
 		Short: "Create a skill",
@@ -211,30 +247,30 @@ func newSkillsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			p, err := hub.NewSkill(args[0], "global")
+			scope := newScope
+			if scope == "" {
+				scope = "global"
+			}
+			p, err := hub.NewSkill(args[0], scope)
 			if err != nil {
 				return err
 			}
 			fmt.Println(p)
 			return nil
 		},
-	})
-	cmd.AddCommand(&cobra.Command{
-		Use:   "get <name>",
-		Args:  cobra.ExactArgs(1),
-		Short: "Show a skill or rule",
+	}
+	newCmd.Flags().StringVar(&newScope, "scope", "global", "global or project:<name>")
+	cmd.AddCommand(newCmd)
+	var showJSON bool
+	show := &cobra.Command{
+		Use:     "show <name>",
+		Aliases: []string{"get"},
+		Args:    cobra.ExactArgs(1),
+		Short:   "Show a skill or rule",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
 				return err
-			}
-			if c := tryDaemon(cfg); c != nil {
-				b, err := c.Skill(args[0])
-				if err != nil {
-					return err
-				}
-				fmt.Println(string(b))
-				return nil
 			}
 			hub, err := skills.Open(cfg)
 			if err != nil {
@@ -244,7 +280,48 @@ func newSkillsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if showJSON {
+				return printJSON(it)
+			}
+			fmt.Printf("%s\t%s\t%s\tenabled=%v\n", it.Kind, it.Name, it.Scope, it.Enabled)
 			fmt.Print(it.Body)
+			return nil
+		},
+	}
+	show.Flags().BoolVar(&showJSON, "json", false, "raw JSON")
+	cmd.AddCommand(show)
+	en := &cobra.Command{
+		Use:   "enable <name>",
+		Args:  cobra.ExactArgs(1),
+		Short: "Enable a skill",
+		RunE:  skillEnable(true),
+	}
+	en.Flags().String("project", "", "project name (optional)")
+	dis := &cobra.Command{
+		Use:   "disable <name>",
+		Args:  cobra.ExactArgs(1),
+		Short: "Disable a skill",
+		RunE:  skillEnable(false),
+	}
+	dis.Flags().String("project", "", "project name (optional)")
+	cmd.AddCommand(en, dis)
+	cmd.AddCommand(&cobra.Command{
+		Use:   "add <path|git-url>",
+		Args:  cobra.ExactArgs(1),
+		Short: "Copy or clone a skill into ~/.devhub/skills",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			hub, err := skills.Open(cfg)
+			if err != nil {
+				return err
+			}
+			if err := hub.Add(args[0]); err != nil {
+				return err
+			}
+			fmt.Println("added", args[0])
 			return nil
 		},
 	})
@@ -347,7 +424,8 @@ func newSkillsCmd() *cobra.Command {
 
 func newRulesCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "rules", Short: "Rules hub"}
-	cmd.AddCommand(&cobra.Command{
+	var ruleScope string
+	newRule := &cobra.Command{
 		Use:   "new <name>",
 		Args:  cobra.ExactArgs(1),
 		Short: "Create a rule",
@@ -360,14 +438,20 @@ func newRulesCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			p, err := hub.NewRule(args[0], "global")
+			scope := ruleScope
+			if scope == "" {
+				scope = "global"
+			}
+			p, err := hub.NewRule(args[0], scope)
 			if err != nil {
 				return err
 			}
 			fmt.Println(p)
 			return nil
 		},
-	})
+	}
+	newRule.Flags().StringVar(&ruleScope, "scope", "global", "global or project:<name>")
+	cmd.AddCommand(newRule)
 	cmd.AddCommand(&cobra.Command{
 		Use:   "ls",
 		Short: "List rules",
@@ -460,9 +544,10 @@ func newUpCmd() *cobra.Command {
 }
 
 func newDownCmd() *cobra.Command {
-	return &cobra.Command{
+	var all bool
+	cmd := &cobra.Command{
 		Use:   "down [project]",
-		Short: "Stop a project profile",
+		Short: "Stop a project profile (shadows; --all includes actives)",
 		RunE: withService(func(svc *core.Service, args []string) error {
 			name := ""
 			if len(args) > 0 {
@@ -475,19 +560,15 @@ func newDownCmd() *cobra.Command {
 				}
 				name = pr.Name
 			}
-			if c := tryDaemon(svc.Cfg); c != nil {
-				if err := c.ProfileDown(name); err == nil {
-					fmt.Println("down", name)
-					return nil
-				}
-			}
-			if err := profile.Down(svc, name); err != nil {
+			if err := profile.Down(svc, name, all); err != nil {
 				return err
 			}
 			fmt.Println("down", name)
 			return nil
 		}),
 	}
+	cmd.Flags().BoolVar(&all, "all", false, "also stop active terminals")
+	return cmd
 }
 
 func newInitCmd() *cobra.Command {
@@ -504,6 +585,14 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 			fmt.Println("wrote", wd+"/devhub.yaml for", pr.Name)
+			for _, sh := range pr.Shadows {
+				if sh.Port == 0 {
+					continue
+				}
+				if p, taken := janitor.PortTaken(sh.Port, nil, nil); taken && p.Owner == "external" {
+					fmt.Printf("warning: port %d is in use by %s (pid %d)\n", p.Port, p.Owner, p.PID)
+				}
+			}
 			return nil
 		},
 	}
@@ -534,30 +623,28 @@ func newProfileCmd() *cobra.Command {
 }
 
 func newPortsCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "ports",
 		Short: "List listening TCP ports",
 		RunE: withServiceOpt(false, func(svc *core.Service, args []string) error {
-			if c := tryDaemon(svc.Cfg); c != nil {
-				b, err := c.Ports()
-				if err == nil {
-					fmt.Println(string(b))
-					return nil
-				}
-			}
 			rows, _ := svc.DB.List(false)
 			ports, err := janitor.ListPorts(rows, nil)
 			if err != nil {
 				return err
 			}
-			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "PORT\tPID\tOWNER\tCMD")
-			for _, p := range ports {
-				fmt.Fprintf(w, "%d\t%d\t%s\t%s\n", p.Port, p.PID, p.Owner, p.Cmd)
+			if asJSON {
+				return printJSON(ports)
 			}
-			return w.Flush()
+			var out [][]string
+			for _, p := range ports {
+				out = append(out, []string{strconv.Itoa(p.Port), strconv.Itoa(int(p.PID)), p.Owner, p.Cmd})
+			}
+			return printTable(os.Stdout, []string{"PORT", "PID", "OWNER", "CMD"}, out)
 		}),
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "raw JSON")
+	return cmd
 }
 
 func newFreeCmd() *cobra.Command {
@@ -660,4 +747,3 @@ func newUpdownUICmd() *cobra.Command {
 		}),
 	}
 }
-

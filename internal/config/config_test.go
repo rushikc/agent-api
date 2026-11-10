@@ -30,7 +30,7 @@ func TestProjectPathRequiresDirectory(t *testing.T) {
 	dir := t.TempDir()
 	cfg.Projects["krayon"] = dir
 	got, err := cfg.ProjectPath("krayon")
-	if err != nil || got != dir {
+	if err != nil || got != CanonPath(dir) {
 		t.Fatalf("got %s %v", got, err)
 	}
 }

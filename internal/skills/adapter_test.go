@@ -79,6 +79,48 @@ func TestProjectRuleWritesMDC(t *testing.T) {
 	}
 }
 
+func TestGlobalRuleSkipsMissingProjectDir(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.Default()
+	cfg.Projects = map[string]string{"gone": filepath.Join(home, "missing-proj")}
+	cfg.Skills.Targets = []string{"cursor"}
+	h := &Hub{Root: filepath.Join(home, "skills"), Cfg: cfg, Home: home, Adapters: []Adapter{CursorAdapter{Home: home}}}
+	if err := h.ensureRepo(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.NewRule("always", "global"); err != nil {
+		t.Fatal(err)
+	}
+	man, err := h.Sync(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range man.Files {
+		if filepath.Dir(f) == filepath.Join(home, "missing-proj", ".cursor", "rules") {
+			t.Fatalf("wrote into missing project: %s", f)
+		}
+	}
+}
+
+func TestNewSkillHonorsProjectScope(t *testing.T) {
+	home := t.TempDir()
+	h := &Hub{Root: filepath.Join(home, "skills"), Cfg: config.Default(), Home: home}
+	if err := h.ensureRepo(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := h.NewSkill("x", "project:krayon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(string(b), "project:krayon") {
+		t.Fatal(string(b))
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (func() bool {
 		for i := 0; i+len(sub) <= len(s); i++ {

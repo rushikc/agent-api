@@ -175,13 +175,6 @@ func (c *CLI) SetEnvironment(target, key, value string) error {
 	return c.run("set-environment", "-t", target, key, value)
 }
 
-func (c *CLI) SetDefaultPath(session, path string) error {
-	if err := requireCwd(path); err != nil {
-		return err
-	}
-	return c.run("set-option", "-t", session, "default-path", path)
-}
-
 func (c *CLI) SetUserOption(target, key, value string) error {
 	if !strings.HasPrefix(key, "@") {
 		key = "@" + key
@@ -286,7 +279,7 @@ func parsePane(line string) (Pane, error) {
 		Dead:       dead,
 		DeadStatus: status,
 		Path:       parts[7],
-		Target:     parts[8],
+		Target:     parts[0] + ":" + parts[2],
 	}, nil
 }
 

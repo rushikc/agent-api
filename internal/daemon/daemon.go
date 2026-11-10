@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -84,6 +85,9 @@ func Run(cfg *config.Config, svc *core.Service) error {
 	if hub != nil {
 		go watchSkills(ctx, hub)
 	}
+	go watchConfig(ctx, cfg, svc)
+	go handleSIGHUP(ctx, cfg, svc)
+	_ = svc.ApplyKeybindingsForce(true)
 	errCh := make(chan error, 2)
 	go func() { errCh <- api.ServeUnix(ctx, srv, cfg.SocketPath()) }()
 	if cfg.API.EnableTCP {
@@ -93,6 +97,50 @@ func Run(cfg *config.Config, svc *core.Service) error {
 		go func() { errCh <- api.ServeTCP(ctx, tcp, addr) }()
 	}
 	return <-errCh
+}
+
+func handleSIGHUP(ctx context.Context, cfg *config.Config, svc *core.Service) {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGHUP)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ch:
+			_ = cfg.Reload()
+			_ = svc.ApplyKeybindingsForce(true)
+		}
+	}
+}
+
+func watchConfig(ctx context.Context, cfg *config.Config, svc *core.Service) {
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		return
+	}
+	defer w.Close()
+	_ = w.Add(cfg.Dir())
+	timer := time.NewTimer(time.Hour)
+	if !timer.Stop() {
+		<-timer.C
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev := <-w.Events:
+			if filepath.Base(ev.Name) != config.ConfigName && ev.Name != cfg.Dir() {
+				if !strings.HasSuffix(ev.Name, config.ConfigName) {
+					continue
+				}
+			}
+			timer.Reset(300 * time.Millisecond)
+		case <-timer.C:
+			_ = cfg.Reload()
+			_ = svc.ApplyKeybindingsForce(true)
+		case <-w.Errors:
+		}
+	}
 }
 
 func watchSkills(ctx context.Context, hub *skills.Hub) {

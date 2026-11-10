@@ -10,9 +10,11 @@ import (
 	"strings"
 
 	"github.com/rushikesh/devhub/internal/config"
+	"github.com/rushikesh/devhub/internal/core"
 	"github.com/rushikesh/devhub/internal/daemon"
 	"github.com/rushikesh/devhub/internal/e2e"
 	"github.com/rushikesh/devhub/internal/shell"
+	"github.com/rushikesh/devhub/internal/tmux"
 	"github.com/spf13/cobra"
 )
 
@@ -68,6 +70,7 @@ func newDoctorCmd() *cobra.Command {
 			fmt.Printf("TERM_PROGRAM=%s\n", term)
 			if cfg, err := config.Load(); err == nil {
 				fmt.Println("daemon:", daemon.Status(cfg))
+				printDoctorChecks(cfg)
 			}
 			printV3Doctor()
 			fmt.Println()
@@ -88,6 +91,57 @@ func newDoctorCmd() *cobra.Command {
 			}
 			return nil
 		},
+	}
+}
+
+func printDoctorChecks(cfg *config.Config) {
+	cli := tmuxCLI()
+	if v, err := cli.Version(); err != nil {
+		fmt.Println("tmux:", err)
+	} else {
+		maj, min, perr := tmuxparse(v)
+		ok := perr == nil && tmux.VersionOK(maj, min)
+		fmt.Printf("tmux: %s (need >= 3.3) ok=%v\n", v, ok)
+	}
+	path := os.Getenv("PATH")
+	home, _ := os.UserHomeDir()
+	inPath := strings.Contains(path, filepath.Join(home, "bin")) || strings.Contains(path, filepath.Join(home, ".local", "bin"))
+	fmt.Printf("PATH has install dir (~/bin or ~/.local/bin): %v\n", inPath)
+	fmt.Println("CGO_ENABLED:", os.Getenv("CGO_ENABLED"))
+	for name, p := range cfg.Projects {
+		if _, err := os.Stat(p); err != nil {
+			fmt.Printf("project %s: MISSING %s\n", name, p)
+		} else {
+			fmt.Printf("project %s: %s\n", name, config.CanonPath(p))
+		}
+	}
+	out, _ := exec.Command("ps", "-ax", "-o", "pid=,command=").Output()
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, "devhub monitor") && !strings.Contains(line, "devhub daemon") {
+			fmt.Println("stale process:", strings.TrimSpace(line), "(stop with: kill <pid>; daemon is the status.json writer)")
+		}
+	}
+}
+
+func tmuxCLI() *tmux.CLI {
+	return tmux.New()
+}
+
+func tmuxparse(v string) (int, int, error) {
+	return tmux.ParseVersion(v)
+}
+
+func newReloadCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "reload",
+		Short: "Reload tmux keybindings into -L devhub",
+		RunE: withService(func(svc *core.Service, args []string) error {
+			if err := svc.ApplyKeybindingsForce(true); err != nil {
+				return err
+			}
+			fmt.Println("sourced", svc.Cfg.TmuxConfPath())
+			return nil
+		}),
 	}
 }
 

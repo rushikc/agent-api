@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -101,7 +102,18 @@ func caller(r *http.Request) string {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(nilSliceToEmpty(v))
+}
+
+func nilSliceToEmpty(v any) any {
+	if v == nil {
+		return []any{}
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Slice && rv.IsNil() {
+		return reflect.MakeSlice(rv.Type(), 0, 0).Interface()
+	}
+	return v
 }
 
 func (s *Server) audit(r *http.Request, action, target string, err error) {
@@ -360,7 +372,8 @@ func (s *Server) profileUp(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) profileDown(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("project")
-	err := profile.Down(s.Core, name)
+	all := r.URL.Query().Get("all") == "1" || r.URL.Query().Get("all") == "true"
+	err := profile.Down(s.Core, name, all)
 	s.audit(r, "profile.down", name, err)
 	if err != nil {
 		http.Error(w, err.Error(), 400)

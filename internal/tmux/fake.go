@@ -18,13 +18,15 @@ type Call struct {
 
 // Fake is an in-memory tmux client for tests.
 type Fake struct {
-	mu       sync.Mutex
-	VersionS string
-	Sessions map[string]*fakeSession
-	Current  string
-	Sourced  []string
-	Fail     error
-	Calls    []Call
+	mu        sync.Mutex
+	VersionS  string
+	Sessions  map[string]*fakeSession
+	Current   string
+	Sourced   []string
+	Fail      error
+	Calls     []Call
+	nextID    int
+	OmitPanes bool
 }
 
 type fakeSession struct {
@@ -34,6 +36,7 @@ type fakeSession struct {
 }
 
 type fakeWindow struct {
+	ID           string
 	Name         string
 	Cwd          string
 	Command      []string
@@ -94,6 +97,7 @@ func (f *Fake) NewSession(opts SessionOpts) error {
 	f.Sessions[opts.Name] = &fakeSession{
 		Name: opts.Name,
 		Windows: []*fakeWindow{{
+			ID:           f.allocID(),
 			Name:         win,
 			Cwd:          opts.Cwd,
 			Command:      opts.Command,
@@ -119,6 +123,7 @@ func (f *Fake) NewWindow(opts WindowOpts) error {
 		return fmt.Errorf("no session %s", opts.Session)
 	}
 	s.Windows = append(s.Windows, &fakeWindow{
+		ID:           f.allocID(),
 		Name:         opts.Name,
 		Cwd:          opts.Cwd,
 		Command:      opts.Command,
@@ -134,22 +139,29 @@ func (f *Fake) ListPanes() ([]Pane, error) {
 	if f.Fail != nil {
 		return nil, f.Fail
 	}
+	if f.OmitPanes {
+		return nil, nil
+	}
 	var out []Pane
 	for _, s := range f.Sessions {
 		for i, w := range s.Windows {
 			if w.Killed {
 				continue
 			}
+			id := w.ID
+			if id == "" {
+				id = fmt.Sprintf("@%d", i)
+			}
 			out = append(out, Pane{
 				Session:    s.Name,
 				Window:     w.Name,
-				WindowID:   fmt.Sprintf("@%s-%d", s.Name, i),
+				WindowID:   id,
 				PaneID:     fmt.Sprintf("%%%s-%d", s.Name, i),
 				PID:        w.PID,
 				Dead:       w.Dead,
 				DeadStatus: w.DeadStatus,
 				Path:       w.Cwd,
-				Target:     s.Name + ":" + w.Name,
+				Target:     s.Name + ":" + id,
 			})
 		}
 	}
@@ -215,8 +227,9 @@ func (f *Fake) KillWindow(target string) error {
 		return fmt.Errorf("no session")
 	}
 	for _, w := range s.Windows {
-		if w.Name == name {
+		if windowMatches(w, name) {
 			w.Killed = true
+			f.record(Call{Op: "kill-window", Target: target, Session: sess, Window: w.Name})
 			return nil
 		}
 	}
@@ -259,7 +272,7 @@ func (f *Fake) MoveWindow(src, dstSession string) error {
 	var w *fakeWindow
 	var rest []*fakeWindow
 	for _, win := range from.Windows {
-		if win.Name == name && !win.Killed {
+		if windowMatches(win, name) && !win.Killed {
 			w = win
 			continue
 		}
@@ -317,19 +330,6 @@ func (f *Fake) SetEnvironment(target, key, value string) error {
 		return f.Fail
 	}
 	f.record(Call{Op: "set-environment", Target: target, Env: map[string]string{key: value}})
-	return nil
-}
-
-func (f *Fake) SetDefaultPath(session, path string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.Fail != nil {
-		return f.Fail
-	}
-	if strings.TrimSpace(path) == "" {
-		return fmt.Errorf("cwd is required")
-	}
-	f.record(Call{Op: "default-path", Session: session, Cwd: path})
 	return nil
 }
 
@@ -398,6 +398,18 @@ func (f *Fake) MarkDead(target string, exitCode int) {
 	}
 }
 
+func (f *Fake) allocID() string {
+	f.nextID++
+	return fmt.Sprintf("@%d", f.nextID)
+}
+
+func windowMatches(w *fakeWindow, name string) bool {
+	if w == nil || w.Killed {
+		return false
+	}
+	return w.Name == name || w.ID == name
+}
+
 func (f *Fake) window(target string) *fakeWindow {
 	sess, name, ok := strings.Cut(target, ":")
 	if !ok {
@@ -408,7 +420,7 @@ func (f *Fake) window(target string) *fakeWindow {
 		return nil
 	}
 	for _, w := range s.Windows {
-		if w.Name == name && !w.Killed {
+		if windowMatches(w, name) {
 			return w
 		}
 	}

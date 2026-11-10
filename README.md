@@ -339,8 +339,11 @@ Data files: `~/.devhub/devhub.db`, `~/.devhub/status.json`, `~/.devhub/tmux.conf
 
 ## Develop
 
+Tests are CGO-free (`go.env` sets `CGO_ENABLED=0` so `go test ./...` matches `make test`). If your Go toolchain ignores `go.env`, use `make test`. Do not add CGO libraries.
+
 ```bash
 make build
 make test
 make lint
+go test ./...
 ```

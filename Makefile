@@ -5,7 +5,7 @@ FORCE ?=
 .PHONY: build install test lint
 
 # Pure Go (modernc sqlite). Avoids Darwin CGO link issues with gopsutil extras.
-export CGO_ENABLED ?= 0
+export CGO_ENABLED := 0
 
 build:
 	go build -o bin/devhub ./cmd/devhub

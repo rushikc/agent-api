@@ -23,7 +23,10 @@ func cwdCalls(fake *tmux.Fake, ops ...string) []tmux.Call {
 
 func TestNewActivePassesProjectCwd(t *testing.T) {
 	svc, fake := testService(t)
-	path := svc.Cfg.Projects["krayon"]
+	path, err := svc.Cfg.ProjectPath("krayon")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := svc.NewActive("krayon", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +51,10 @@ func TestNewActivePassesProjectCwd(t *testing.T) {
 
 func TestNewShadowPassesProjectCwd(t *testing.T) {
 	svc, fake := testService(t)
-	path := svc.Cfg.Projects["krayon"]
+	path, err := svc.Cfg.ProjectPath("krayon")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := svc.NewShadow("krayon", "", []string{"npm", "run", "dev"}); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +69,10 @@ func TestNewShadowPassesProjectCwd(t *testing.T) {
 
 func TestSwitchProjectCreatesThenSwitches(t *testing.T) {
 	svc, fake := testService(t)
-	path := svc.Cfg.Projects["krayon"]
+	path, err := svc.Cfg.ProjectPath("krayon")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.SwitchProject("krayon"); err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +109,10 @@ func TestSwitchProjectCreatesThenSwitches(t *testing.T) {
 
 func TestRestartRespawnsWithCwd(t *testing.T) {
 	svc, fake := testService(t)
-	path := svc.Cfg.Projects["krayon"]
+	path, err := svc.Cfg.ProjectPath("krayon")
+	if err != nil {
+		t.Fatal(err)
+	}
 	sess, err := svc.NewShadow("krayon", "dev", []string{"npm", "run", "dev"})
 	if err != nil {
 		t.Fatal(err)

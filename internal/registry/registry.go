@@ -25,6 +25,7 @@ type Status string
 const (
 	StatusRunning Status = "running"
 	StatusExited  Status = "exited"
+	StatusStopped Status = "stopped"
 )
 
 type Session struct {
@@ -195,6 +196,36 @@ INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);
 			`INSERT OR IGNORE INTO schema_migrations(version) VALUES (3);`,
 		} {
 			if _, err := db.sql.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+				return err
+			}
+		}
+	}
+	_ = db.sql.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&v)
+	if v < 4 {
+		for _, stmt := range []string{
+			`CREATE TABLE sessions_v4 (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project TEXT NOT NULL,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('active','shadow')),
+  command TEXT,
+  cwd TEXT,
+  tmux_target TEXT,
+  pane_pid INTEGER,
+  created_at DATETIME NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('running','exited','stopped')),
+  exit_code INTEGER,
+  restart_count INTEGER NOT NULL DEFAULT 0,
+  port INTEGER,
+  UNIQUE(project, name)
+);`,
+			`INSERT INTO sessions_v4 (id, project, name, kind, command, cwd, tmux_target, pane_pid, created_at, status, exit_code, restart_count, port)
+SELECT id, project, name, kind, command, cwd, tmux_target, pane_pid, created_at, status, exit_code, restart_count, port FROM sessions;`,
+			`DROP TABLE sessions;`,
+			`ALTER TABLE sessions_v4 RENAME TO sessions;`,
+			`INSERT OR IGNORE INTO schema_migrations(version) VALUES (4);`,
+		} {
+			if _, err := db.sql.Exec(stmt); err != nil {
 				return err
 			}
 		}
@@ -504,15 +535,31 @@ func scanSession(row rowScanner) (Session, error) {
 }
 
 func matchPane(s Session, panes []tmux.Pane) (tmux.Pane, bool) {
+	wantSess := expectedSession(s)
+	wantID := windowIDFromTarget(s.TmuxTarget)
 	for _, p := range panes {
-		if s.TmuxTarget != "" && p.Target == s.TmuxTarget {
+		if s.TmuxTarget != "" && (p.Target == s.TmuxTarget || p.Session+":"+p.WindowID == s.TmuxTarget) {
 			return p, true
 		}
-		if p.Session == expectedSession(s) && p.Window == s.Name {
+		if wantID != "" && p.Session == wantSess && (p.WindowID == wantID || p.WindowID == "@"+strings.TrimPrefix(wantID, "@")) {
+			return p, true
+		}
+		if p.Session == wantSess && p.Window == s.Name {
 			return p, true
 		}
 	}
 	return tmux.Pane{}, false
+}
+
+func windowIDFromTarget(target string) string {
+	_, rest, ok := strings.Cut(target, ":")
+	if !ok {
+		return ""
+	}
+	if strings.HasPrefix(rest, "@") {
+		return rest
+	}
+	return ""
 }
 
 func expectedSession(s Session) string {
@@ -529,7 +576,7 @@ func (db *DB) Reconcile(panes []tmux.Pane) error {
 		return err
 	}
 	for _, s := range sessions {
-		if s.Status == StatusExited {
+		if s.Status == StatusExited || s.Status == StatusStopped {
 			continue
 		}
 		p, ok := matchPane(s, panes)

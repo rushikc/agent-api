@@ -20,6 +20,7 @@ type Proc struct {
 	CPUPct float64
 	Name   string
 	Cwd    string
+	Start  int64
 }
 
 // DefaultSource is a CGO-free ProcSource backed by `ps` (and lsof for cwd).
@@ -43,7 +44,7 @@ func (s *DefaultSource) refresh() []Proc {
 }
 
 func ReadPS() []Proc {
-	cmd := exec.Command("ps", "-axo", "pid=,ppid=,uid=,rss=,pcpu=,comm=")
+	cmd := exec.Command("ps", "-axo", "pid=,ppid=,uid=,rss=,pcpu=,etimes=,comm=")
 	b, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -65,12 +66,20 @@ func ParsePS(b []byte) []Proc {
 		rssKB, _ := strconv.ParseUint(fields[3], 10, 64)
 		cpu, _ := strconv.ParseFloat(fields[4], 64)
 		name := fields[5]
+		var start int64
+		if len(fields) >= 7 {
+			etimes, _ := strconv.ParseInt(fields[5], 10, 64)
+			name = fields[6]
+			if etimes >= 0 {
+				start = time.Now().Unix() - etimes
+			}
+		}
 		if pid <= 0 {
 			continue
 		}
 		out = append(out, Proc{
 			PID: int32(pid), PPID: int32(ppid), UID: int32(uid),
-			RSS: rssKB * 1024, CPUPct: cpu, Name: name,
+			RSS: rssKB * 1024, CPUPct: cpu, Name: name, Start: start,
 		})
 	}
 	return out
@@ -107,6 +116,15 @@ func (s *DefaultSource) RSS(pid int32) (uint64, error) {
 	for _, p := range s.refresh() {
 		if p.PID == pid {
 			return p.RSS, nil
+		}
+	}
+	return 0, fmt.Errorf("no pid %d", pid)
+}
+
+func (s *DefaultSource) StartTime(pid int32) (int64, error) {
+	for _, p := range s.refresh() {
+		if p.PID == pid {
+			return p.Start, nil
 		}
 	}
 	return 0, fmt.Errorf("no pid %d", pid)

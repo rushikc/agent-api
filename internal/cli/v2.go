@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,6 +14,7 @@ import (
 	"github.com/rushikesh/devhub/internal/core"
 	"github.com/rushikesh/devhub/internal/daemon"
 	"github.com/rushikesh/devhub/internal/janitor"
+	"github.com/rushikesh/devhub/internal/jsonx"
 	"github.com/rushikesh/devhub/internal/mcp"
 	"github.com/rushikesh/devhub/internal/profile"
 	"github.com/rushikesh/devhub/internal/skills"
@@ -27,9 +27,7 @@ func withCaller(kind string) {
 }
 
 func printJSON(v any) error {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(v)
+	return jsonx.Encode(os.Stdout, v)
 }
 
 func skillEnable(on bool) func(*cobra.Command, []string) error {

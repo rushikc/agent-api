@@ -251,7 +251,7 @@ func Up(svc *core.Service, pr *Profile, autoFree bool) ([]UpResult, error) {
 			}
 		}
 		cmd := strings.Fields(sh.Command)
-		sess, err := svc.NewShadowIn(pr.Name, sh.Name, cwd, cmd, env, sh.Port)
+		sess, err := svc.NewShadowIn(pr.Name, sh.Name, cwd, cmd, env, sh.Port, sh.Restart)
 		if err != nil {
 			results = append(results, UpResult{Name: sh.Name, Kind: "shadow", Port: sh.Port, Status: err.Error()})
 			continue

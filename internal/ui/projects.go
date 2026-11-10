@@ -17,14 +17,14 @@ func RunProjects(svc *core.Service) error {
 }
 
 type projectsModel struct {
-	svc     *core.Service
-	names   []string
-	paths   map[string]string
-	cursor  int
-	filter  string
-	err     string
-	width   int
-	height  int
+	svc    *core.Service
+	names  []string
+	paths  map[string]string
+	cursor int
+	filter string
+	err    string
+	width  int
+	height int
 }
 
 func newProjects(svc *core.Service) projectsModel {

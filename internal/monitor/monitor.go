@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"runtime"
 	"sync"
 	"time"
 
@@ -15,6 +16,7 @@ type ProcSource interface {
 	Children(pid int32) ([]int32, error)
 	CPUTimes(pid int32) (float64, error)
 	RSS(pid int32) (uint64, error)
+	StartTime(pid int32) (int64, error)
 }
 
 type Sample struct {
@@ -30,8 +32,17 @@ type Sampler struct {
 }
 
 type cpuPoint struct {
-	cpu  float64
-	wall time.Time
+	cpu   float64
+	wall  time.Time
+	start int64
+}
+
+func CPUCap() float64 {
+	n := runtime.NumCPU()
+	if n < 1 {
+		n = 1
+	}
+	return float64(n) * 100
 }
 
 func NewSampler(src ProcSource) *Sampler {
@@ -89,7 +100,12 @@ func SumTree(src ProcSource, last map[int32]cpuPoint, now time.Time, root int32)
 		if err != nil {
 			continue
 		}
-		if prev, ok := last[pid]; ok && now.After(prev.wall) {
+		start, _ := src.StartTime(pid)
+		prev, ok := last[pid]
+		if ok && prev.start != 0 && start != 0 && prev.start != start {
+			ok = false
+		}
+		if ok && now.After(prev.wall) {
 			dt := now.Sub(prev.wall).Seconds()
 			if dt > 0 {
 				delta := ct - prev.cpu
@@ -100,9 +116,22 @@ func SumTree(src ProcSource, last map[int32]cpuPoint, now time.Time, root int32)
 				used++
 			}
 		}
-		next[pid] = cpuPoint{cpu: ct, wall: now}
+		next[pid] = cpuPoint{cpu: ct, wall: now, start: start}
 	}
-	_ = used
+	if used == 0 {
+		pct := 0.0
+		if len(pids) > 0 {
+			pct = -1
+		}
+		return Sample{PIDs: pids, CPUPct: pct, RSSBytes: rss}, next
+	}
+	capn := CPUCap()
+	if cpu > capn {
+		cpu = capn
+	}
+	if cpu < 0 {
+		cpu = 0
+	}
 	return Sample{PIDs: pids, CPUPct: cpu, RSSBytes: rss}, next
 }
 
@@ -160,7 +189,9 @@ func BuildSnapshot(sessions []registry.Session, sampler *Sampler) Snapshot {
 			st.PIDs = sample.PIDs
 			st.CPUPct = sample.CPUPct
 			st.RSSBytes = sample.RSSBytes
-			snap.CPUPct += sample.CPUPct
+			if sample.CPUPct >= 0 {
+				snap.CPUPct += sample.CPUPct
+			}
 			snap.RSSBytes += sample.RSSBytes
 		}
 		if s.Kind == registry.KindActive && s.Status == registry.StatusRunning {
@@ -199,7 +230,13 @@ func ReadSnapshot(path string) (Snapshot, error) {
 }
 
 func FormatShort(snap Snapshot) string {
-	return fmt.Sprintf("%d active | %d shadow | %.1f%% | %s", snap.Active, snap.Shadow, snap.CPUPct, formatBytes(snap.RSSBytes))
+	cpu := "-"
+	if snap.CPUPct >= 0 {
+		cpu = fmt.Sprintf("%.1f%%", snap.CPUPct)
+	} else {
+		cpu = "0.0%"
+	}
+	return fmt.Sprintf("%d active | %d shadow | %s | %s", snap.Active, snap.Shadow, cpu, formatBytes(snap.RSSBytes))
 }
 
 func formatBytes(n uint64) string {

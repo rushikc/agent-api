@@ -431,29 +431,88 @@ func (c *Config) AddProject(name, path string) error {
 	return c.Save()
 }
 
+func (c *Config) RemoveProject(name string) error {
+	if _, ok := c.Projects[name]; !ok {
+		return fmt.Errorf("unknown project %q", name)
+	}
+	delete(c.Projects, name)
+	return c.Save()
+}
+
+func (c *Config) MoveProject(name, path string) error {
+	if _, ok := c.Projects[name]; !ok {
+		return fmt.Errorf("unknown project %q", name)
+	}
+	expanded, err := ExpandPath(path)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(expanded)
+	if err != nil {
+		return fmt.Errorf("path %s: %w", expanded, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("path %s is not a directory", expanded)
+	}
+	c.Projects[name] = CanonPath(expanded)
+	return c.Save()
+}
+
 func SuggestNearby(path string) []string {
+	path = filepath.Clean(path)
 	parent := filepath.Dir(path)
 	base := filepath.Base(path)
-	entries, err := os.ReadDir(parent)
-	if err != nil {
-		return nil
-	}
 	var hints []string
-	lower := strings.ToLower(base)
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+	seen := map[string]bool{}
+	add := func(p string) {
+		p = filepath.Clean(p)
+		if seen[p] {
+			return
 		}
-		n := e.Name()
-		if n == base {
-			continue
+		st, err := os.Stat(p)
+		if err != nil || !st.IsDir() {
+			return
 		}
-		if strings.EqualFold(n, base) || strings.Contains(strings.ToLower(n), lower) || strings.Contains(lower, strings.ToLower(n)) {
-			hints = append(hints, n)
+		seen[p] = true
+		hints = append(hints, p)
+	}
+	entries, err := os.ReadDir(parent)
+	if err == nil {
+		lower := strings.ToLower(base)
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			n := e.Name()
+			if strings.EqualFold(n, base) || strings.Contains(strings.ToLower(n), lower) || strings.Contains(lower, strings.ToLower(n)) {
+				add(filepath.Join(parent, n))
+			}
 		}
 	}
-	if len(hints) > 5 {
-		hints = hints[:5]
+	gp := filepath.Dir(parent)
+	gents, err := os.ReadDir(gp)
+	if err == nil {
+		wantParent := strings.ToLower(filepath.Base(parent))
+		for _, e := range gents {
+			if !e.IsDir() {
+				continue
+			}
+			n := e.Name()
+			if strings.EqualFold(n, wantParent) || strings.EqualFold(n, wantParent+"s") || strings.EqualFold(n+"s", wantParent) {
+				add(filepath.Join(gp, n, base))
+				ents, _ := os.ReadDir(filepath.Join(gp, n))
+				for _, c := range ents {
+					if c.IsDir() && strings.EqualFold(c.Name(), base) {
+						add(filepath.Join(gp, n, c.Name()))
+					}
+				}
+			}
+		}
+	}
+	repl := strings.NewReplacer("/project/", "/Projects/", "/Project/", "/Projects/")
+	add(repl.Replace(path))
+	if len(hints) > 8 {
+		hints = hints[:8]
 	}
 	return hints
 }

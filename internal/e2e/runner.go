@@ -234,8 +234,8 @@ func (q *Queue) runJob(ctx context.Context, j *job, run *registry.E2ERun) (err e
 		return err
 	}
 	if j.req.Force || !q.Eng.HasImage(ctx, tag) {
-		q.appendLog(run.ID, "building "+tag+"\n")
-		if err := q.Eng.BuildImage(ctx, filepath.Dir(dfPath), filepath.Base(dfPath), tag, logWriter{q, run.ID}); err != nil {
+		q.appendLog(run.ID, "[build] building "+tag+"\n")
+		if err := q.Eng.BuildImage(ctx, filepath.Dir(dfPath), filepath.Base(dfPath), tag, newPrefixWriter(logWriter{q, run.ID}, "[build] ")); err != nil {
 			return err
 		}
 	}
@@ -305,6 +305,7 @@ func (q *Queue) runJob(ctx context.Context, j *job, run *registry.E2ERun) (err e
 		if e := q.Eng.StartContainer(ctx, id); e != nil {
 			return e
 		}
+		q.appendLog(run.ID, "[service:"+svc.Name+"] started\n")
 		if svc.Ready.TCP > 0 {
 			ip, _ := q.Eng.ContainerIP(ctx, id)
 			if e := waitTCP(ctx, ip, svc.Ready.TCP); e != nil {
@@ -358,7 +359,7 @@ func (q *Queue) runJob(ctx context.Context, j *job, run *registry.E2ERun) (err e
 
 	if rc, e := q.Eng.Logs(ctx, jobID); e == nil {
 		defer rc.Close()
-		go func() { _, _ = io.Copy(logWriter{q, run.ID}, rc) }()
+		go func() { _, _ = io.Copy(newPrefixWriter(logWriter{q, run.ID}, "[test] "), rc) }()
 	}
 	code, err := q.Eng.WaitContainer(ctx, jobID)
 	run.ExitCode = &code
@@ -378,6 +379,7 @@ func (q *Queue) runJob(ctx context.Context, j *job, run *registry.E2ERun) (err e
 		_ = os.WriteFile(filepath.Join(artDir, "run.log"), []byte(body), 0o644)
 	}
 	q.mu.Unlock()
+	q.appendLog(run.ID, "[teardown] copying artifacts\n")
 	for _, a := range cfg.Artifacts {
 		src := a
 		if !strings.HasPrefix(src, "/") {
@@ -387,23 +389,17 @@ func (q *Queue) runJob(ctx context.Context, j *job, run *registry.E2ERun) (err e
 		if e != nil {
 			continue
 		}
-		dest := filepath.Join(artDir, filepath.Base(a)+".tar")
-		f, e := os.Create(dest)
-		if e == nil {
-			_, _ = io.Copy(f, rc)
-			_ = f.Close()
-		}
+		destDir := filepath.Join(artDir, filepath.Base(a))
+		_ = ExtractTar(rc, destDir)
 		_ = rc.Close()
 	}
-	if jpath := FindJUnit(artDir); jpath != "" {
-		if sum, e := ParseJUnit(jpath); e == nil {
-			raw, _ := json.Marshal(sum)
-			run.Summary = string(raw)
-			if sum.Failed > 0 {
-				run.Status = "failed"
-			} else {
-				run.Status = "passed"
-			}
+	if sum, ok := SummarizeJUnitDir(artDir); ok {
+		raw, _ := json.Marshal(sum)
+		run.Summary = string(raw)
+		if sum.Failed > 0 {
+			run.Status = "failed"
+		} else {
+			run.Status = "passed"
 		}
 	} else if code != 0 {
 		run.Status = "failed"

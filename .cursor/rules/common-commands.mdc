@@ -1,0 +1,12 @@
+---
+description: Use the shared command names (dev, fixed, frontend, backend, test, e2e, build, lint, typecheck) defined in COMMANDS.md.
+alwaysApply: true
+---
+
+# Common commands
+
+- Read `COMMANDS.md` in the repo root before running, suggesting or writing commands in a plan.
+- Use the common names: `dev`, `fixed`, `frontend`, `backend`, `test`, `e2e`, `build`, `lint`, `typecheck`. Don't invent new names for these jobs or use older aliases when a common name exists.
+- Use pnpm when the repo has `pnpm-lock.yaml`, otherwise npm. Go projects use `make <name>`.
+- `test` never runs e2e. Run `e2e` only when the user explicitly asks for it.
+- If you add or change one of these scripts, update the "This project" section of `COMMANDS.md` in the same change.

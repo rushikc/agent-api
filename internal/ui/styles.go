@@ -97,4 +97,3 @@ func formatRSS(n uint64) string {
 	}
 	return fmt.Sprintf("%d B", n)
 }
-

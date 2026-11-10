@@ -350,4 +350,3 @@ func (m shadowsModel) View() string {
 	b.WriteString(renderHelp([]string{"enter peek", "R restart", "x kill", "a add", "o promote", "esc/q close"}, m.width))
 	return b.String()
 }
-

@@ -103,19 +103,29 @@ func (s *Service) EnvFor(project string, extra map[string]string) map[string]str
 }
 
 func (s *Service) wrapCommand(id int64, cmd []string) []string {
-	if id == 0 || len(cmd) == 0 {
+	if id == 0 {
 		return cmd
 	}
-	if strings.HasSuffix(filepath.Base(s.Executable()), ".test") {
-		return cmd
-	}
-	return append([]string{s.Executable(), "exec-env", "--id", strconv.FormatInt(id, 10), "--"}, cmd...)
+	return []string{s.Executable(), "exec-env", "--id", strconv.FormatInt(id, 10)}
+}
+
+type ExecPayload struct {
+	Env  map[string]string `json:"env"`
+	Argv []string          `json:"argv"`
 }
 
 func (s *Service) ExecEnv(id int64) (map[string]string, error) {
-	sess, err := s.Get(id)
+	p, err := s.ExecPayload(id)
 	if err != nil {
 		return nil, err
+	}
+	return p.Env, nil
+}
+
+func (s *Service) ExecPayload(id int64) (ExecPayload, error) {
+	sess, err := s.Get(id)
+	if err != nil {
+		return ExecPayload{}, err
 	}
 	extra := map[string]string{}
 	if s.ProfileEnv != nil {
@@ -123,7 +133,7 @@ func (s *Service) ExecEnv(id int64) (map[string]string, error) {
 			extra[k] = v
 		}
 	}
-	return s.EnvFor(sess.Project, extra), nil
+	return ExecPayload{Env: s.EnvFor(sess.Project, extra), Argv: ParseArgv(sess)}, nil
 }
 
 func (s *Service) Emit(kind, target, project string, payload map[string]any) {
@@ -403,10 +413,10 @@ func (s *Service) nextActiveName(project string) (string, error) {
 }
 
 func (s *Service) NewShadow(project, name string, command []string) (registry.Session, error) {
-	return s.NewShadowIn(project, name, "", command, nil, 0)
+	return s.NewShadowIn(project, name, "", command, nil, 0, "")
 }
 
-func (s *Service) NewShadowIn(project, name, cwd string, command []string, extraEnv map[string]string, port int) (registry.Session, error) {
+func (s *Service) NewShadowIn(project, name, cwd string, command []string, extraEnv map[string]string, port int, restart string) (registry.Session, error) {
 	if project == "" {
 		return registry.Session{}, fmt.Errorf("project is required")
 	}
@@ -429,7 +439,7 @@ func (s *Service) NewShadowIn(project, name, cwd string, command []string, extra
 	if s.Remote != nil {
 		return s.Remote.Create(map[string]any{
 			"project": project, "name": name, "kind": "shadow",
-			"command": strings.Join(command, " "), "cwd": cwd,
+			"command": DisplayCommand(command), "argv": command, "cwd": cwd, "restart": restart,
 		})
 	}
 	sess := tmux.ShadowSession(project)
@@ -444,8 +454,9 @@ func (s *Service) NewShadowIn(project, name, cwd string, command []string, extra
 	env := s.publicEnv(project)
 	_ = extraEnv
 	row := registry.Session{
-		Project: project, Name: name, Kind: registry.KindShadow, Command: strings.Join(command, " "),
+		Project: project, Name: name, Kind: registry.KindShadow, Command: DisplayCommand(command),
 		Cwd: cwd, CreatedAt: time.Now(), Status: registry.StatusRunning, Port: port,
+		ArgvJSON: EncodeArgv(command), Restart: restart,
 	}
 	if existing.ID > 0 {
 		row.ID = existing.ID
@@ -537,7 +548,15 @@ func (s *Service) Attach(ref string) error {
 }
 
 func (s *Service) Kill(ref string) error {
-	return s.killWith(ref, registry.StatusExited)
+	sess, err := s.Lookup(ref)
+	if err != nil {
+		return err
+	}
+	st := registry.StatusExited
+	if sess.Kind == registry.KindShadow {
+		st = registry.StatusStopped
+	}
+	return s.killWith(ref, st)
 }
 
 func (s *Service) Stop(ref string) error {
@@ -574,10 +593,10 @@ func (s *Service) Restart(ref string) error {
 	if s.Remote != nil && sess.ID != 0 {
 		return s.Remote.Restart(sess.ID)
 	}
-	if strings.TrimSpace(sess.Command) == "" {
+	cmd := ParseArgv(sess)
+	if len(cmd) == 0 {
 		return fmt.Errorf("%s has no stored command to restart", ref)
 	}
-	cmd := strings.Fields(sess.Command)
 	cwd := sess.Cwd
 	if p, err := s.Cfg.ProjectPath(sess.Project); err == nil {
 		cwd = p

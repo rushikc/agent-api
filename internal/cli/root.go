@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/rushikesh/devhub/internal/core"
 	"github.com/rushikesh/devhub/internal/daemon"
 	"github.com/rushikesh/devhub/internal/monitor"
+	"github.com/rushikesh/devhub/internal/profile"
 	"github.com/rushikesh/devhub/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -146,7 +148,7 @@ func newNewCmd() *cobra.Command {
 }
 
 func newShadowCmd() *cobra.Command {
-	var name string
+	var name, restart string
 	cmd := &cobra.Command{
 		Use:   "shadow <project> -- <command...>",
 		Short: "Start a background (shadow) process",
@@ -154,7 +156,7 @@ func newShadowCmd() *cobra.Command {
 		RunE: withService(func(svc *core.Service, args []string) error {
 			project := args[0]
 			command := args[1:]
-			sess, err := svc.NewShadow(project, name, command)
+			sess, err := svc.NewShadowIn(project, name, "", command, nil, 0, restart)
 			if err != nil {
 				return err
 			}
@@ -163,6 +165,7 @@ func newShadowCmd() *cobra.Command {
 		}),
 	}
 	cmd.Flags().StringVar(&name, "name", "", "shadow name")
+	cmd.Flags().StringVar(&restart, "restart", "", "on-failure|always")
 	return cmd
 }
 
@@ -187,7 +190,11 @@ func newLsCmd() *cobra.Command {
 			var out [][]string
 			for _, r := range rows {
 				s := r.Session
-				out = append(out, []string{s.Project, s.Name, string(s.Kind), string(s.Status), fmt.Sprintf("%.1f", r.CPUPct), formatRSS(r.RSSBytes), s.Command})
+				cpu := "-"
+				if r.CPUPct >= 0 {
+					cpu = fmt.Sprintf("%.1f", r.CPUPct)
+				}
+				out = append(out, []string{s.Project, s.Name, string(s.Kind), string(s.Status), cpu, formatRSS(r.RSSBytes), s.Command})
 			}
 			return printTable(os.Stdout, []string{"PROJECT", "NAME", "KIND", "STATUS", "CPU%", "RSS", "COMMAND"}, out)
 		}),
@@ -350,7 +357,74 @@ func newProjectCmd() *cobra.Command {
 			return printTable(os.Stdout, []string{"NAME", "PATH"}, rows)
 		}),
 	})
+	var yes bool
+	rm := &cobra.Command{
+		Use:   "rm <name>",
+		Short: "Unregister a project",
+		Args:  cobra.ExactArgs(1),
+		RunE: withService(func(svc *core.Service, args []string) error {
+			return projectRm(svc, args[0], yes)
+		}),
+	}
+	rm.Flags().BoolVarP(&yes, "yes", "y", false, "do not confirm")
+	cmd.AddCommand(rm)
+	var mvYes bool
+	mv := &cobra.Command{
+		Use:   "mv <name> <new-path>",
+		Short: "Move a project's path",
+		Args:  cobra.ExactArgs(2),
+		RunE: withService(func(svc *core.Service, args []string) error {
+			return projectMv(svc, args[0], args[1], mvYes)
+		}),
+	}
+	mv.Flags().BoolVarP(&mvYes, "yes", "y", false, "do not confirm")
+	cmd.AddCommand(mv)
 	return cmd
+}
+
+func confirmYes(prompt string, yes bool) bool {
+	if yes {
+		return true
+	}
+	fmt.Printf("%s [y/N] ", prompt)
+	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	line = strings.ToLower(strings.TrimSpace(line))
+	return line == "y" || line == "yes"
+}
+
+func projectRm(svc *core.Service, name string, yes bool) error {
+	if _, err := svc.Cfg.ProjectPath(name); err != nil {
+		if svc.Cfg.Projects[name] == "" {
+			return err
+		}
+	}
+	if !confirmYes("remove project "+name+" and stop its sessions?", yes) {
+		return fmt.Errorf("aborted")
+	}
+	_ = profile.Down(svc, name, true)
+	if err := svc.Cfg.RemoveProject(name); err != nil {
+		return err
+	}
+	if c := tryDaemon(svc.Cfg); c != nil {
+		_ = c.Reload()
+	}
+	fmt.Println("removed", name)
+	return nil
+}
+
+func projectMv(svc *core.Service, name, dest string, yes bool) error {
+	if !confirmYes("move project "+name+" to "+dest+" (tmux sessions will be recreated)?", yes) {
+		return fmt.Errorf("aborted")
+	}
+	if err := svc.Cfg.MoveProject(name, dest); err != nil {
+		return err
+	}
+	_ = profile.Down(svc, name, true)
+	if c := tryDaemon(svc.Cfg); c != nil {
+		_ = c.Reload()
+	}
+	fmt.Printf("moved %s -> %s\n", name, svc.Cfg.Projects[name])
+	return nil
 }
 
 func newStatusCmd() *cobra.Command {

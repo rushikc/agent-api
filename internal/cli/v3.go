@@ -212,8 +212,11 @@ func newE2ECmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(string(b))
-			return nil
+			var rows any
+			if err := json.Unmarshal(b, &rows); err != nil || rows == nil {
+				return printJSON([]any{})
+			}
+			return printJSON(rows)
 		},
 	})
 	var follow bool
@@ -321,8 +324,11 @@ func newSecretsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(string(b))
-			return nil
+			var rows any
+			if err := json.Unmarshal(b, &rows); err != nil || rows == nil {
+				return printJSON([]any{})
+			}
+			return printJSON(rows)
 		},
 	})
 	cmd.AddCommand(&cobra.Command{

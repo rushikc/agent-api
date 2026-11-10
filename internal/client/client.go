@@ -179,12 +179,20 @@ func (c *Client) Reload() error {
 	return c.do(http.MethodPost, "/v1/reload", nil, nil)
 }
 
+type ExecPayload struct {
+	Env  map[string]string `json:"env"`
+	Argv []string          `json:"argv"`
+}
+
 func (c *Client) ExecEnv(id int64) (map[string]string, error) {
-	var out struct {
-		Env map[string]string `json:"env"`
-	}
+	p, err := c.ExecPayload(id)
+	return p.Env, err
+}
+
+func (c *Client) ExecPayload(id int64) (ExecPayload, error) {
+	var out ExecPayload
 	err := c.do(http.MethodGet, fmt.Sprintf("/v1/sessions/%d/exec-env", id), nil, &out)
-	return out.Env, err
+	return out, err
 }
 
 func (c *Client) Profiles() (json.RawMessage, error) {

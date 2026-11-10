@@ -42,6 +42,8 @@ type Session struct {
 	ExitCode     *int
 	RestartCount int
 	Port         int
+	ArgvJSON     string
+	Restart      string
 }
 
 type AuditEntry struct {
@@ -243,6 +245,18 @@ SELECT id, project, name, kind, command, cwd, tmux_target, pane_pid, created_at,
 			}
 		}
 	}
+	_ = db.sql.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&v)
+	if v < 6 {
+		for _, stmt := range []string{
+			`ALTER TABLE sessions ADD COLUMN argv TEXT;`,
+			`ALTER TABLE sessions ADD COLUMN restart TEXT;`,
+			`INSERT OR IGNORE INTO schema_migrations(version) VALUES (6);`,
+		} {
+			if _, err := db.sql.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -281,10 +295,10 @@ func (db *DB) Insert(s Session) (int64, error) {
 		s.Status = StatusRunning
 	}
 	res, err := db.sql.Exec(`
-INSERT INTO sessions (project, name, kind, command, cwd, tmux_target, pane_pid, created_at, status, exit_code, restart_count, port)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+INSERT INTO sessions (project, name, kind, command, cwd, tmux_target, pane_pid, created_at, status, exit_code, restart_count, port, argv, restart)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.Project, s.Name, string(s.Kind), s.Command, s.Cwd, s.TmuxTarget, s.PanePID,
-		s.CreatedAt.UTC().Format(time.RFC3339), string(s.Status), s.ExitCode, s.RestartCount, nullPort(s.Port),
+		s.CreatedAt.UTC().Format(time.RFC3339), string(s.Status), s.ExitCode, s.RestartCount, nullPort(s.Port), s.ArgvJSON, s.Restart,
 	)
 	if err != nil {
 		return 0, err
@@ -294,9 +308,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 
 func (db *DB) Update(s Session) error {
 	_, err := db.sql.Exec(`
-UPDATE sessions SET kind=?, command=?, cwd=?, tmux_target=?, pane_pid=?, status=?, exit_code=?, name=?, project=?, restart_count=?, port=?
+UPDATE sessions SET kind=?, command=?, cwd=?, tmux_target=?, pane_pid=?, status=?, exit_code=?, name=?, project=?, restart_count=?, port=?, argv=?, restart=?
 WHERE id=?`,
-		string(s.Kind), s.Command, s.Cwd, s.TmuxTarget, s.PanePID, string(s.Status), s.ExitCode, s.Name, s.Project, s.RestartCount, nullPort(s.Port), s.ID,
+		string(s.Kind), s.Command, s.Cwd, s.TmuxTarget, s.PanePID, string(s.Status), s.ExitCode, s.Name, s.Project, s.RestartCount, nullPort(s.Port), s.ArgvJSON, s.Restart, s.ID,
 	)
 	return err
 }
@@ -462,7 +476,7 @@ func (db *DB) Get(id int64) (Session, error) {
 	return scanSession(db.sql.QueryRow(sessionSelect+` WHERE id=?`, id))
 }
 
-const sessionSelect = `SELECT id, project, name, kind, command, cwd, tmux_target, pane_pid, created_at, status, exit_code, COALESCE(restart_count,0), COALESCE(port,0) FROM sessions`
+const sessionSelect = `SELECT id, project, name, kind, command, cwd, tmux_target, pane_pid, created_at, status, exit_code, COALESCE(restart_count,0), COALESCE(port,0), COALESCE(argv,''), COALESCE(restart,'') FROM sessions`
 
 func (db *DB) List(includeExited bool) ([]Session, error) {
 	q := sessionSelect
@@ -548,7 +562,8 @@ func scanSession(row rowScanner) (Session, error) {
 	var pid sql.NullInt64
 	var exit sql.NullInt64
 	var restarts, port sql.NullInt64
-	err := row.Scan(&s.ID, &s.Project, &s.Name, &kind, &command, &cwd, &target, &pid, &created, &status, &exit, &restarts, &port)
+	var argv, restart sql.NullString
+	err := row.Scan(&s.ID, &s.Project, &s.Name, &kind, &command, &cwd, &target, &pid, &created, &status, &exit, &restarts, &port, &argv, &restart)
 	if err != nil {
 		return Session{}, err
 	}
@@ -571,6 +586,8 @@ func scanSession(row rowScanner) (Session, error) {
 	}
 	s.RestartCount = int(restarts.Int64)
 	s.Port = int(port.Int64)
+	s.ArgvJSON = argv.String
+	s.Restart = restart.String
 	return s, nil
 }
 

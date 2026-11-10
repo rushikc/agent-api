@@ -32,14 +32,14 @@ func RunSkills() error {
 }
 
 type skillsModel struct {
-	hub     *skills.Hub
-	items   []skills.Item
+	hub      *skills.Hub
+	items    []skills.Item
 	filtered []skills.Item
-	cursor  int
-	filter  string
-	err     string
-	width   int
-	height  int
+	cursor   int
+	filter   string
+	err      string
+	width    int
+	height   int
 }
 
 func (m *skillsModel) apply() {

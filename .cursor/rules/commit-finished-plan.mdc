@@ -38,7 +38,9 @@ Rules for this pass:
 - ESLint is not a typecheck. Dev-server HMR and checker overlays (such as `vite-plugin-checker`) don't replace the typecheck. Treat a type overlay as a failure.
 - Fix every error the pass reports. Don't dismiss unused imports, missing library exports, or callback type errors as noise.
 - After toolchain or typecheck config changes, restart the dev server. Don't reuse a leftover dev or preview server on the same port.
-- Don't run the full test suite unless the prompt asks for it. The user runs tests. Run targeted tests the prompt lists, and project-specific test rules in `.cursor/rules` still apply.
+- Don't run the full test suite unless the prompt asks for it. The user runs tests. Run targeted unit tests the prompt lists, and project-specific test rules in `.cursor/rules` still apply.
+- Skip end-to-end tests by default (Playwright, Cypress, `test:e2e*` scripts, or anything under `e2e/` or `tests/e2e`): don't run them and don't list them in a plan, even if another rule or a project doc mentions them.
+- Run the complete e2e suite only when the user explicitly asks for it in the prompt. Then add it to the plan's "Verify and commit" section and run it.
 
 ## When to commit
 

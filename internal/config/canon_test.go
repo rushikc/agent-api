@@ -37,6 +37,24 @@ func TestAddProjectSuggestsNearby(t *testing.T) {
 	}
 }
 
+func TestSuggestNearbyProjectsDir(t *testing.T) {
+	root := t.TempDir()
+	want := filepath.Join(root, "Projects", "doc-mate")
+	if err := os.MkdirAll(want, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hints := SuggestNearby(filepath.Join(root, "project", "doc-mate"))
+	found := false
+	for _, h := range hints {
+		if CanonPath(h) == CanonPath(want) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("hints %v want %s", hints, want)
+	}
+}
+
 func TestReloadSeesNewProject(t *testing.T) {
 	dir := t.TempDir()
 	cfg := Default().WithDir(dir)

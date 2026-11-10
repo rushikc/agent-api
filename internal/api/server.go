@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +21,7 @@ import (
 	"github.com/rushikesh/devhub/internal/events"
 	"github.com/rushikesh/devhub/internal/gcp"
 	"github.com/rushikesh/devhub/internal/janitor"
+	"github.com/rushikesh/devhub/internal/jsonx"
 	"github.com/rushikesh/devhub/internal/monitor"
 	"github.com/rushikesh/devhub/internal/profile"
 	"github.com/rushikesh/devhub/internal/registry"
@@ -102,18 +102,7 @@ func caller(r *http.Request) string {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(nilSliceToEmpty(v))
-}
-
-func nilSliceToEmpty(v any) any {
-	if v == nil {
-		return []any{}
-	}
-	rv := reflect.ValueOf(v)
-	if rv.Kind() == reflect.Slice && rv.IsNil() {
-		return reflect.MakeSlice(rv.Type(), 0, 0).Interface()
-	}
-	return v
+	_ = json.NewEncoder(w).Encode(jsonx.Normalize(v))
 }
 
 func (s *Server) audit(r *http.Request, action, target string, err error) {
@@ -180,11 +169,13 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Project string `json:"project"`
-		Name    string `json:"name"`
-		Kind    string `json:"kind"`
-		Command string `json:"command"`
-		Cwd     string `json:"cwd"`
+		Project string   `json:"project"`
+		Name    string   `json:"name"`
+		Kind    string   `json:"kind"`
+		Command string   `json:"command"`
+		Argv    []string `json:"argv"`
+		Cwd     string   `json:"cwd"`
+		Restart string   `json:"restart"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), 400)
@@ -193,7 +184,11 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	var sess registry.Session
 	var err error
 	if body.Kind == "shadow" {
-		sess, err = s.Core.NewShadowIn(body.Project, body.Name, body.Cwd, strings.Fields(body.Command), nil, 0)
+		argv := body.Argv
+		if len(argv) == 0 {
+			argv = strings.Fields(body.Command)
+		}
+		sess, err = s.Core.NewShadowIn(body.Project, body.Name, body.Cwd, argv, nil, 0, body.Restart)
 	} else {
 		sess, err = s.Core.NewActiveIn(body.Project, body.Name, body.Cwd, nil)
 	}
@@ -422,12 +417,12 @@ func (s *Server) sessionExecEnv(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad id", 400)
 		return
 	}
-	env, err := s.Core.ExecEnv(id)
+	p, err := s.Core.ExecPayload(id)
 	if err != nil {
 		http.Error(w, err.Error(), 404)
 		return
 	}
-	writeJSON(w, map[string]any{"env": env})
+	writeJSON(w, p)
 }
 
 func (s *Server) reloadConfig(w http.ResponseWriter, r *http.Request) {

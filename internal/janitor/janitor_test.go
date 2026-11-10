@@ -14,6 +14,7 @@ type treeSrc struct {
 func (t treeSrc) Children(pid int32) ([]int32, error) { return t.ch[pid], nil }
 func (t treeSrc) CPUTimes(pid int32) (float64, error) { return 0, nil }
 func (t treeSrc) RSS(pid int32) (uint64, error)       { return 0, nil }
+func (t treeSrc) StartTime(pid int32) (int64, error)  { return 0, nil }
 
 func TestCanKillDenylist(t *testing.T) {
 	if err := CanKill(1, "launchd", 0, 501); err == nil {

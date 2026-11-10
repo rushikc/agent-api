@@ -7,6 +7,7 @@ import (
 
 const (
 	ShadowCrashed      = "shadow.crashed"
+	ShadowExited       = "shadow.exited"
 	ShadowRestartedMax = "shadow.restarted_max"
 	E2EFinished        = "e2e.finished"
 	E2EFailed          = "e2e.failed"

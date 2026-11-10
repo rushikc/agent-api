@@ -155,7 +155,7 @@ func (d *dockerEng) BuildImage(ctx context.Context, dockerfileDir, dockerfile, t
 	if w == nil {
 		w = io.Discard
 	}
-	_, err = io.Copy(w, resp.Body)
+	err = DecodeBuildStream(resp.Body, w)
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("build: %s", resp.Status)
 	}
@@ -270,7 +270,13 @@ func (d *dockerEng) Logs(ctx context.Context, id string) (io.ReadCloser, error) 
 		_ = resp.Body.Close()
 		return nil, fmt.Errorf("logs: %s", resp.Status)
 	}
-	return resp.Body, nil
+	pr, pw := io.Pipe()
+	go func() {
+		defer pw.Close()
+		_ = DemuxDockerLogs(resp.Body, pw)
+		_ = resp.Body.Close()
+	}()
+	return pr, nil
 }
 
 func (d *dockerEng) CopyTo(ctx context.Context, id, dest string, tar io.Reader) error {

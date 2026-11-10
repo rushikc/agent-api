@@ -65,7 +65,8 @@ func runShellInstall(devhubDir string) error {
 }
 
 func newDoctorCmd() *cobra.Command {
-	return &cobra.Command{
+	var fix bool
+	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check tmux, Option-as-Meta, and PATH",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -74,6 +75,11 @@ func newDoctorCmd() *cobra.Command {
 			if cfg, err := config.Load(); err == nil {
 				fmt.Println("daemon:", daemon.Status(cfg))
 				printDoctorChecks(cfg)
+				if fix {
+					if err := doctorFixProjects(cfg); err != nil {
+						return err
+					}
+				}
 			}
 			printV3Doctor()
 			fmt.Println()
@@ -95,6 +101,43 @@ func newDoctorCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&fix, "fix", false, "offer to fix missing project paths")
+	return cmd
+}
+
+func doctorFixProjects(cfg *config.Config) error {
+	changed := false
+	for name, p := range cfg.Projects {
+		if _, err := os.Stat(p); err == nil {
+			continue
+		}
+		hints := config.SuggestNearby(p)
+		fmt.Printf("project %s: MISSING %s\n", name, p)
+		if len(hints) > 0 {
+			fmt.Printf("  suggestions: %s\n", strings.Join(hints, ", "))
+			if confirmYes(fmt.Sprintf("  use %s?", hints[0]), false) {
+				cfg.Projects[name] = hints[0]
+				changed = true
+				fmt.Println("  updated", name, "->", hints[0])
+				continue
+			}
+		}
+		if confirmYes("  remove this project from config?", false) {
+			delete(cfg.Projects, name)
+			changed = true
+			fmt.Println("  removed", name)
+		}
+	}
+	if !changed {
+		return nil
+	}
+	if err := cfg.Save(); err != nil {
+		return err
+	}
+	if c := tryDaemon(cfg); c != nil {
+		_ = c.Reload()
+	}
+	return nil
 }
 
 func printDoctorChecks(cfg *config.Config) {
@@ -140,7 +183,6 @@ func newExecEnvCmd() *cobra.Command {
 		Use:    "exec-env",
 		Short:  "Inject resolved secrets and exec a command",
 		Hidden: true,
-		Args:   cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if id == 0 {
 				return fmt.Errorf("--id is required")
@@ -153,18 +195,25 @@ func newExecEnvCmd() *cobra.Command {
 				return err
 			}
 			c := client.Unix(cfg, "exec-env")
-			env, err := c.ExecEnv(id)
+			p, err := c.ExecPayload(id)
 			if err != nil {
 				return err
 			}
-			for k, v := range env {
+			for k, v := range p.Env {
 				_ = os.Setenv(k, v)
 			}
-			bin, err := exec.LookPath(args[0])
-			if err != nil {
-				bin = args[0]
+			argv := p.Argv
+			if len(args) > 0 {
+				argv = args
 			}
-			return syscall.Exec(bin, args, os.Environ())
+			if len(argv) == 0 {
+				return fmt.Errorf("no command stored for session %d", id)
+			}
+			bin, err := exec.LookPath(argv[0])
+			if err != nil {
+				bin = argv[0]
+			}
+			return syscall.Exec(bin, argv, os.Environ())
 		},
 	}
 	cmd.Flags().Int64Var(&id, "id", 0, "session id")

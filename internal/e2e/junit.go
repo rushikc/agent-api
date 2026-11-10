@@ -101,20 +101,41 @@ func accSuite(s *Summary, su junitSuite) {
 }
 
 func FindJUnit(dir string) string {
-	var found string
+	files := FindJUnitFiles(dir)
+	if len(files) == 0 {
+		return ""
+	}
+	return files[0]
+}
+
+func FindJUnitFiles(dir string) []string {
+	var found []string
 	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
 		n := strings.ToLower(info.Name())
-		if strings.Contains(n, "junit") && strings.HasSuffix(n, ".xml") {
-			found = path
-			return filepath.SkipAll
-		}
-		if n == "results.xml" || n == "test-results.xml" {
-			found = path
+		if strings.HasSuffix(n, ".xml") && (strings.Contains(n, "junit") || n == "results.xml" || n == "test-results.xml" || n == "junit.xml") {
+			found = append(found, path)
 		}
 		return nil
 	})
 	return found
+}
+
+func SummarizeJUnitDir(dir string) (Summary, bool) {
+	var all Summary
+	ok := false
+	for _, p := range FindJUnitFiles(dir) {
+		sum, err := ParseJUnit(p)
+		if err != nil {
+			continue
+		}
+		ok = true
+		all.Passed += sum.Passed
+		all.Failed += sum.Failed
+		all.Skipped += sum.Skipped
+		all.Failures = append(all.Failures, sum.Failures...)
+	}
+	return all, ok
 }

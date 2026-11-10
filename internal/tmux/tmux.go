@@ -80,6 +80,7 @@ type Client interface {
 	SetUserOption(target, key, value string) error
 	RespawnPane(opts RespawnOpts) error
 	HasPane(target string) (bool, error)
+	SendKeys(target, keys string) error
 }
 
 func ProjectSession(project string) string {

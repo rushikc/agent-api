@@ -17,10 +17,32 @@ const (
 	StatusName    = "status.json"
 	TmuxConfName  = "tmux.conf"
 	MonitorLock   = "monitor.lock"
+	SocketName    = "devhub.sock"
+	PidName       = "daemon.pid"
+	TokenName     = "token"
+	LogDirName    = "logs"
 )
 
 type Keys struct {
 	Mode string `yaml:"mode"` // option | prefix | both
+}
+
+type APIConfig struct {
+	EnableTCP bool `yaml:"enable_tcp"`
+	TCPPort   int  `yaml:"tcp_port"`
+}
+
+type MCPConfig struct {
+	AllowMutations bool `yaml:"allow_mutations"`
+	AllowPortKill  bool `yaml:"allow_port_kill"`
+}
+
+type SkillsConfig struct {
+	Targets []string `yaml:"targets"`
+}
+
+type JanitorConfig struct {
+	ProcessNames []string `yaml:"process_names"`
 }
 
 type Config struct {
@@ -29,6 +51,10 @@ type Config struct {
 	Projects              map[string]string   `yaml:"projects"`
 	ProjectColors         map[string]string   `yaml:"project_colors"`
 	DefaultShadowCommands map[string][]string `yaml:"default_shadow_commands"`
+	API                   APIConfig           `yaml:"api"`
+	MCP                   MCPConfig           `yaml:"mcp"`
+	Skills                SkillsConfig        `yaml:"skills"`
+	Janitor               JanitorConfig       `yaml:"janitor"`
 	path                  string
 	dir                   string
 }
@@ -48,6 +74,12 @@ func Default() *Config {
 		Projects:              map[string]string{},
 		ProjectColors:         map[string]string{},
 		DefaultShadowCommands: map[string][]string{},
+		API:                   APIConfig{EnableTCP: false, TCPPort: 7420},
+		MCP:                   MCPConfig{AllowMutations: true, AllowPortKill: false},
+		Skills:                SkillsConfig{Targets: []string{"cursor"}},
+		Janitor: JanitorConfig{ProcessNames: []string{
+			"node", "npm", "pnpm", "bun", "go", "python", "python3", "vite", "next",
+		}},
 	}
 }
 
@@ -91,6 +123,15 @@ func Load() (*Config, error) {
 	}
 	if cfg.DefaultShadowCommands == nil {
 		cfg.DefaultShadowCommands = map[string][]string{}
+	}
+	if cfg.API.TCPPort == 0 {
+		cfg.API.TCPPort = 7420
+	}
+	if len(cfg.Skills.Targets) == 0 {
+		cfg.Skills.Targets = []string{"cursor"}
+	}
+	if len(cfg.Janitor.ProcessNames) == 0 {
+		cfg.Janitor.ProcessNames = Default().Janitor.ProcessNames
 	}
 	cfg.dir = dir
 	cfg.path = path
@@ -141,6 +182,30 @@ func (c *Config) TmuxConfPath() string {
 
 func (c *Config) MonitorLockPath() string {
 	return filepath.Join(c.Dir(), MonitorLock)
+}
+
+func (c *Config) SocketPath() string {
+	return filepath.Join(c.Dir(), SocketName)
+}
+
+func (c *Config) PidPath() string {
+	return filepath.Join(c.Dir(), PidName)
+}
+
+func (c *Config) TokenPath() string {
+	return filepath.Join(c.Dir(), TokenName)
+}
+
+func (c *Config) LogDir() string {
+	return filepath.Join(c.Dir(), LogDirName)
+}
+
+func (c *Config) DaemonLogPath() string {
+	return filepath.Join(c.LogDir(), "daemon.log")
+}
+
+func (c *Config) SkillsDir() string {
+	return filepath.Join(c.Dir(), "skills")
 }
 
 func (c *Config) KeysMode() string {

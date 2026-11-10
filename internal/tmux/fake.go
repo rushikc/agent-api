@@ -365,6 +365,19 @@ func (f *Fake) RespawnPane(opts RespawnOpts) error {
 	return nil
 }
 
+func (f *Fake) SendKeys(target, keys string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.Fail != nil {
+		return f.Fail
+	}
+	f.record(Call{Op: "send-keys", Target: target, Command: []string{keys}})
+	if f.window(target) == nil {
+		return fmt.Errorf("no pane %s", target)
+	}
+	return nil
+}
+
 func (f *Fake) HasPane(target string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

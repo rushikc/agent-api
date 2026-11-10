@@ -199,6 +199,10 @@ func (c *CLI) RespawnPane(opts RespawnOpts) error {
 	return c.run(args...)
 }
 
+func (c *CLI) SendKeys(target, keys string) error {
+	return c.run("send-keys", "-t", target, keys)
+}
+
 func (c *CLI) HasPane(target string) (bool, error) {
 	panes, err := c.ListPanes()
 	if err != nil {

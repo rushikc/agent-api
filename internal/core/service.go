@@ -73,10 +73,79 @@ func (s *Service) Executable() string {
 }
 
 func (s *Service) projectEnv(project string) map[string]string {
-	return map[string]string{
+	return s.EnvFor(project, nil)
+}
+
+func (s *Service) EnvFor(project string, extra map[string]string) map[string]string {
+	env := map[string]string{
 		"DEVHUB_PROJECT": project,
 		"DEVHUB_COLOR":   s.Cfg.ColorFor(project),
 	}
+	for k, v := range extra {
+		env[k] = v
+	}
+	return env
+}
+
+func Caller() string {
+	if v := strings.TrimSpace(os.Getenv("DEVHUB_CALLER")); v != "" {
+		return v
+	}
+	return "cli"
+}
+
+func (s *Service) Audit(caller, action, target, result string) {
+	if s.DB == nil {
+		return
+	}
+	_ = s.DB.Audit(caller, action, target, result)
+}
+
+func (s *Service) Get(id int64) (registry.Session, error) {
+	return s.DB.Get(id)
+}
+
+func (s *Service) PeekLines(ref string, lines int) (string, error) {
+	if lines == 0 {
+		lines = 200
+	}
+	sess, err := s.Lookup(ref)
+	if err != nil {
+		if id, e2 := strconv.ParseInt(ref, 10, 64); e2 == nil {
+			sess, err = s.Get(id)
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	if sess.TmuxTarget == "" {
+		return "", fmt.Errorf("%s has no tmux pane", ref)
+	}
+	start := -lines
+	return s.Tmux.CapturePane(sess.TmuxTarget, start)
+}
+
+func (s *Service) Send(ref, keys string, force bool) error {
+	sess, err := s.lookupRef(ref)
+	if err != nil {
+		return err
+	}
+	if sess.Kind == registry.KindShadow && !force {
+		return fmt.Errorf("refusing send-keys to shadow %s (pass force=true)", ref)
+	}
+	if sess.TmuxTarget == "" {
+		return fmt.Errorf("no tmux pane")
+	}
+	return s.Tmux.SendKeys(sess.TmuxTarget, keys)
+}
+
+func (s *Service) lookupRef(ref string) (registry.Session, error) {
+	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
+		if sess, err := s.Get(id); err == nil {
+			return sess, nil
+		}
+	}
+	return s.Lookup(ref)
 }
 
 func (s *Service) decorateSession(session, project, cwd string) error {
@@ -162,13 +231,19 @@ func (s *Service) Lookup(ref string) (registry.Session, error) {
 }
 
 func (s *Service) NewActive(project, name string) (registry.Session, error) {
+	return s.NewActiveIn(project, name, "", nil)
+}
+
+func (s *Service) NewActiveIn(project, name, cwd string, extraEnv map[string]string) (registry.Session, error) {
 	project, err := s.resolveProject(project)
 	if err != nil {
 		return registry.Session{}, err
 	}
-	cwd, err := s.Cfg.ProjectPath(project)
-	if err != nil {
-		return registry.Session{}, err
+	if cwd == "" {
+		cwd, err = s.Cfg.ProjectPath(project)
+		if err != nil {
+			return registry.Session{}, err
+		}
 	}
 	if name == "" {
 		name, err = s.nextActiveName(project)
@@ -180,14 +255,14 @@ func (s *Service) NewActive(project, name string) (registry.Session, error) {
 	if existingErr == nil && existing.Status == registry.StatusRunning {
 		return existing, nil
 	}
-	created, err := s.ensureProjectSession(project, cwd, name)
+	created, err := s.ensureProjectSession(project, cwd, name, extraEnv)
 	if err != nil {
 		return registry.Session{}, err
 	}
 	sessName := tmux.ProjectSession(project)
 	if !created && !windowExists(s.Tmux, sessName, name) {
 		if err := s.Tmux.NewWindow(tmux.WindowOpts{
-			Session: sessName, Name: name, Cwd: cwd, Env: s.projectEnv(project),
+			Session: sessName, Name: name, Cwd: cwd, Env: s.EnvFor(project, extraEnv),
 		}); err != nil {
 			return registry.Session{}, err
 		}
@@ -219,6 +294,7 @@ func (s *Service) NewActive(project, name string) (registry.Session, error) {
 		return registry.Session{}, err
 	}
 	row.ID = id
+	s.Audit(Caller(), "create", project+"/"+name, "ok")
 	_ = s.EnsureMonitor()
 	return row, nil
 }
@@ -236,7 +312,7 @@ func windowExists(client tmux.Client, session, window string) bool {
 	return false
 }
 
-func (s *Service) ensureProjectSession(project, cwd, firstWindow string) (created bool, err error) {
+func (s *Service) ensureProjectSession(project, cwd, firstWindow string, extraEnv map[string]string) (created bool, err error) {
 	sess := tmux.ProjectSession(project)
 	has, err := s.Tmux.HasSession(sess)
 	if err != nil {
@@ -249,7 +325,7 @@ func (s *Service) ensureProjectSession(project, cwd, firstWindow string) (create
 		firstWindow = "v1"
 	}
 	if err := s.Tmux.NewSession(tmux.SessionOpts{
-		Name: sess, Window: firstWindow, Cwd: cwd, Env: s.projectEnv(project),
+		Name: sess, Window: firstWindow, Cwd: cwd, Env: s.EnvFor(project, extraEnv),
 	}); err != nil {
 		return false, err
 	}
@@ -278,15 +354,22 @@ func (s *Service) nextActiveName(project string) (string, error) {
 }
 
 func (s *Service) NewShadow(project, name string, command []string) (registry.Session, error) {
+	return s.NewShadowIn(project, name, "", command, nil, 0)
+}
+
+func (s *Service) NewShadowIn(project, name, cwd string, command []string, extraEnv map[string]string, port int) (registry.Session, error) {
 	if project == "" {
 		return registry.Session{}, fmt.Errorf("project is required")
 	}
 	if len(command) == 0 {
 		return registry.Session{}, fmt.Errorf("command is required (example: devhub shadow %s -- npm run dev)", project)
 	}
-	cwd, err := s.Cfg.ProjectPath(project)
-	if err != nil {
-		return registry.Session{}, err
+	var err error
+	if cwd == "" {
+		cwd, err = s.Cfg.ProjectPath(project)
+		if err != nil {
+			return registry.Session{}, err
+		}
 	}
 	if name == "" {
 		name, err = s.uniqueShadowName(project, sanitizeName(command))
@@ -299,7 +382,7 @@ func (s *Service) NewShadow(project, name string, command []string) (registry.Se
 	if err != nil {
 		return registry.Session{}, err
 	}
-	env := s.projectEnv(project)
+	env := s.EnvFor(project, extraEnv)
 	optsWin := tmux.WindowOpts{Session: sess, Name: name, Cwd: cwd, Command: command, Env: env, RemainOnExit: true}
 	if !has {
 		if err := s.Tmux.NewSession(tmux.SessionOpts{
@@ -329,12 +412,14 @@ func (s *Service) NewShadow(project, name string, command []string) (registry.Se
 		PanePID:    pid,
 		CreatedAt:  time.Now(),
 		Status:     registry.StatusRunning,
+		Port:       port,
 	}
 	id, err := s.DB.Insert(row)
 	if err != nil {
 		return registry.Session{}, err
 	}
 	row.ID = id
+	s.Audit(Caller(), "create", project+"/"+name, "ok")
 	_ = s.EnsureMonitor()
 	return row, nil
 }
@@ -392,7 +477,13 @@ func (s *Service) Kill(ref string) error {
 	}
 	sess.Status = registry.StatusExited
 	sess.PanePID = 0
-	return s.DB.Update(sess)
+	err = s.DB.Update(sess)
+	res := "ok"
+	if err != nil {
+		res = err.Error()
+	}
+	s.Audit(Caller(), "kill", ref, res)
+	return err
 }
 
 func (s *Service) Restart(ref string) error {
@@ -436,7 +527,14 @@ func (s *Service) Restart(ref string) error {
 			sess.Status = registry.StatusRunning
 			sess.ExitCode = nil
 			sess.CreatedAt = time.Now()
-			return s.DB.Update(sess)
+			sess.RestartCount++
+			err = s.DB.Update(sess)
+			res := "ok"
+			if err != nil {
+				res = err.Error()
+			}
+			s.Audit(Caller(), "restart", ref, res)
+			return err
 		}
 	}
 	has, err := s.Tmux.HasSession(sessionName)
@@ -466,7 +564,14 @@ func (s *Service) Restart(ref string) error {
 	sess.Status = registry.StatusRunning
 	sess.ExitCode = nil
 	sess.CreatedAt = time.Now()
-	return s.DB.Update(sess)
+	sess.RestartCount++
+	err = s.DB.Update(sess)
+	res := "ok"
+	if err != nil {
+		res = err.Error()
+	}
+	s.Audit(Caller(), "restart", ref, res)
+	return err
 }
 
 func (s *Service) Promote(ref string) error {
@@ -481,7 +586,7 @@ func (s *Service) Promote(ref string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.ensureProjectSession(sess.Project, cwd, ""); err != nil {
+	if _, err := s.ensureProjectSession(sess.Project, cwd, "", nil); err != nil {
 		return err
 	}
 	dst := tmux.ProjectSession(sess.Project)
@@ -542,7 +647,7 @@ func (s *Service) SwitchProject(name string) error {
 		return err
 	}
 	sess := tmux.ProjectSession(name)
-	created, err := s.ensureProjectSession(name, cwd, "v1")
+	created, err := s.ensureProjectSession(name, cwd, "v1", nil)
 	if err != nil {
 		return err
 	}
@@ -610,7 +715,7 @@ func (s *Service) EnsureMonitor() error {
 	}
 	_ = lock.Close() // release so the child can take it
 	exe := s.Executable()
-	cmd := exec.Command(exe, "monitor")
+	cmd := exec.Command(exe, "daemon")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdout = nil
 	cmd.Stderr = nil
@@ -745,10 +850,13 @@ func RenderTmuxConf(cfg *config.Config, exe string) string {
 		writePopup("h", "shadows", "-w 80% -h 70%", false)
 		writePopup("r", "top", "-w 90% -h 80%", false)
 		writePopup("p", "projects", "-w 50% -h 50%", false)
+		writePopup("k", "skills-ui", "-w 80% -h 70%", false)
+		writePopup("o", "janitor", "-w 80% -h 70%", false)
+		writePopup("u", "updown", "-w 50% -h 50%", false)
 		for i := 1; i <= 9; i++ {
 			writeJump(i, false)
 		}
-		b.WriteString("# v2: M-k skills, M-o ports/orphans, M-u up/down\n\n")
+		b.WriteString("\n")
 	}
 	if usePrefix {
 		b.WriteString("# Prefix bindings (Ctrl-Space by default)\n")
@@ -756,6 +864,9 @@ func RenderTmuxConf(cfg *config.Config, exe string) string {
 		writePopup("h", "shadows", "-w 80% -h 70%", true)
 		writePopup("r", "top", "-w 90% -h 80%", true)
 		writePopup("p", "projects", "-w 50% -h 50%", true)
+		writePopup("k", "skills-ui", "-w 80% -h 70%", true)
+		writePopup("o", "janitor", "-w 80% -h 70%", true)
+		writePopup("u", "updown", "-w 50% -h 50%", true)
 		b.WriteString("\n")
 		for i := 1; i <= 9; i++ {
 			writeJump(i, true)

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/rushikesh/devhub/internal/config"
+	"github.com/rushikesh/devhub/internal/daemon"
 	"github.com/rushikesh/devhub/internal/shell"
 	"github.com/spf13/cobra"
 )
@@ -64,6 +65,9 @@ func newDoctorCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			term := os.Getenv("TERM_PROGRAM")
 			fmt.Printf("TERM_PROGRAM=%s\n", term)
+			if cfg, err := config.Load(); err == nil {
+				fmt.Println("daemon:", daemon.Status(cfg))
+			}
 			fmt.Println()
 			fmt.Println("Option (Alt) must send Meta/Esc+ so M-s, M-h, M-p work.")
 			fmt.Println("This disables typing special characters such as ©/π with Option in that profile.")

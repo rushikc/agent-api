@@ -341,8 +341,8 @@ func (m shadowsModel) View() string {
 			}
 			stat := statusStyle(s.Status).Render(fmt.Sprintf("%-7s", s.Status))
 			up := time.Since(s.CreatedAt).Truncate(time.Second)
-			line := fmt.Sprintf("%s%-12s %-18s %s  up %s  cpu %5.1f%%  %s  %s",
-				cur, s.Project, s.Name, stat, up, it.CPUPct, formatRSS(it.RSSBytes), s.Command)
+			line := fmt.Sprintf("%s%-12s %-18s %s  up %s  rst %d  cpu %5.1f%%  %s  %s",
+				cur, s.Project, s.Name, stat, up, s.RestartCount, it.CPUPct, formatRSS(it.RSSBytes), s.Command)
 			b.WriteString(st.Render(line) + "\n")
 		}
 	}

@@ -7,9 +7,10 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/rushikesh/devhub/internal/config"
 	"github.com/rushikesh/devhub/internal/core"
+	"github.com/rushikesh/devhub/internal/daemon"
 	"github.com/rushikesh/devhub/internal/monitor"
-	"github.com/rushikesh/devhub/internal/tmux"
 	"github.com/rushikesh/devhub/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -28,6 +29,12 @@ func newRoot() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			withCaller("cli")
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			_ = daemon.Ensure(cfg)
 			svc, err := core.Open()
 			if err != nil {
 				return err
@@ -55,6 +62,20 @@ func newRoot() *cobra.Command {
 		newShellCmd(),
 		newDoctorCmd(),
 		newSetupCmd(),
+		newDaemonCmd(),
+		newMCPCmd(),
+		newSkillsCmd(),
+		newRulesCmd(),
+		newUpCmd(),
+		newDownCmd(),
+		newInitCmd(),
+		newProfileCmd(),
+		newPortsCmd(),
+		newFreeCmd(),
+		newOrphansCmd(),
+		newJanitorUICmd(),
+		newSkillsUICmd(),
+		newUpdownUICmd(),
 	)
 	return cmd
 }
@@ -65,6 +86,14 @@ func withService(fn func(*core.Service, []string) error) func(*cobra.Command, []
 
 func withServiceOpt(needTmux bool, fn func(*core.Service, []string) error) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
+		if os.Getenv("DEVHUB_CALLER") == "" {
+			withCaller("cli")
+		}
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		_ = daemon.Ensure(cfg)
 		svc, err := core.Open()
 		if err != nil {
 			return err
@@ -219,6 +248,7 @@ func newPickerCmd() *cobra.Command {
 		Use:   "picker",
 		Short: "Fuzzy picker for active terminals",
 		RunE: withService(func(svc *core.Service, args []string) error {
+			withCaller("tui")
 			_ = svc.Reconcile()
 			return ui.RunPicker(svc)
 		}),
@@ -230,6 +260,7 @@ func newShadowsCmd() *cobra.Command {
 		Use:   "shadows",
 		Short: "Shadow process UI",
 		RunE: withService(func(svc *core.Service, args []string) error {
+			withCaller("tui")
 			_ = svc.Reconcile()
 			return ui.RunShadows(svc)
 		}),
@@ -241,6 +272,7 @@ func newTopCmd() *cobra.Command {
 		Use:   "top",
 		Short: "Live CPU and RAM table",
 		RunE: withService(func(svc *core.Service, args []string) error {
+			withCaller("tui")
 			_ = svc.Reconcile()
 			return ui.RunTop(svc)
 		}),
@@ -252,6 +284,7 @@ func newProjectsUICmd() *cobra.Command {
 		Use:   "projects",
 		Short: "Project switcher",
 		RunE: withService(func(svc *core.Service, args []string) error {
+			withCaller("tui")
 			return ui.RunProjects(svc)
 		}),
 	}
@@ -336,16 +369,7 @@ func newMonitorCmd() *cobra.Command {
 				return err
 			}
 			defer svc.Close()
-			lock, err := monitor.TryLock(svc.Cfg.MonitorLockPath())
-			if err != nil {
-				return nil
-			}
-			defer lock.Close()
-			client := svc.Tmux
-			if _, ok := client.(*tmux.CLI); !ok {
-				client = tmux.New()
-			}
-			return monitor.RunLoop(client, svc.DB, svc.Cfg.StatusPath(), 2*time.Second, nil)
+			return daemon.Run(svc.Cfg, svc)
 		},
 	}
 }

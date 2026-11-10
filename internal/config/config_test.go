@@ -35,6 +35,22 @@ func TestProjectPathRequiresDirectory(t *testing.T) {
 	}
 }
 
+func TestDefaultV2Fields(t *testing.T) {
+	cfg := Default()
+	if cfg.API.EnableTCP || cfg.API.TCPPort != 7420 {
+		t.Fatalf("api %+v", cfg.API)
+	}
+	if !cfg.MCP.AllowMutations || cfg.MCP.AllowPortKill {
+		t.Fatalf("mcp %+v", cfg.MCP)
+	}
+	if len(cfg.Skills.Targets) != 1 || cfg.Skills.Targets[0] != "cursor" {
+		t.Fatalf("skills %+v", cfg.Skills)
+	}
+	if len(cfg.Janitor.ProcessNames) == 0 {
+		t.Fatal("janitor names")
+	}
+}
+
 func TestHashColorStable(t *testing.T) {
 	if HashColor("krayon") != HashColor("krayon") {
 		t.Fatal("hash should be stable")

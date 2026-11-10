@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/rushikesh/devhub/internal/tmux"
@@ -27,17 +28,28 @@ const (
 )
 
 type Session struct {
-	ID         int64
-	Project    string
-	Name       string
-	Kind       Kind
-	Command    string
-	Cwd        string
-	TmuxTarget string
-	PanePID    int
-	CreatedAt  time.Time
-	Status     Status
-	ExitCode   *int
+	ID           int64
+	Project      string
+	Name         string
+	Kind         Kind
+	Command      string
+	Cwd          string
+	TmuxTarget   string
+	PanePID      int
+	CreatedAt    time.Time
+	Status       Status
+	ExitCode     *int
+	RestartCount int
+	Port         int
+}
+
+type AuditEntry struct {
+	ID     int64
+	TS     time.Time
+	Caller string
+	Action string
+	Target string
+	Result string
 }
 
 type DB struct {
@@ -52,7 +64,7 @@ func Open(path string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	sqldb.SetMaxOpenConns(1)
+	sqldb.SetMaxOpenConns(8)
 	for _, pragma := range []string{
 		"PRAGMA journal_mode=WAL;",
 		"PRAGMA busy_timeout=5000;",
@@ -99,7 +111,31 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	var v int
+	_ = db.sql.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&v)
+	if v < 2 {
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts DATETIME NOT NULL,
+  caller TEXT NOT NULL,
+  action TEXT NOT NULL,
+  target TEXT,
+  result TEXT
+);`,
+			`ALTER TABLE sessions ADD COLUMN restart_count INTEGER NOT NULL DEFAULT 0;`,
+			`ALTER TABLE sessions ADD COLUMN port INTEGER;`,
+			`INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);`,
+		} {
+			if _, err := db.sql.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (db *DB) Insert(s Session) (int64, error) {
@@ -110,10 +146,10 @@ func (db *DB) Insert(s Session) (int64, error) {
 		s.Status = StatusRunning
 	}
 	res, err := db.sql.Exec(`
-INSERT INTO sessions (project, name, kind, command, cwd, tmux_target, pane_pid, created_at, status, exit_code)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+INSERT INTO sessions (project, name, kind, command, cwd, tmux_target, pane_pid, created_at, status, exit_code, restart_count, port)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.Project, s.Name, string(s.Kind), s.Command, s.Cwd, s.TmuxTarget, s.PanePID,
-		s.CreatedAt.UTC().Format(time.RFC3339), string(s.Status), s.ExitCode,
+		s.CreatedAt.UTC().Format(time.RFC3339), string(s.Status), s.ExitCode, s.RestartCount, nullPort(s.Port),
 	)
 	if err != nil {
 		return 0, err
@@ -123,10 +159,26 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 
 func (db *DB) Update(s Session) error {
 	_, err := db.sql.Exec(`
-UPDATE sessions SET kind=?, command=?, cwd=?, tmux_target=?, pane_pid=?, status=?, exit_code=?, name=?, project=?
+UPDATE sessions SET kind=?, command=?, cwd=?, tmux_target=?, pane_pid=?, status=?, exit_code=?, name=?, project=?, restart_count=?, port=?
 WHERE id=?`,
-		string(s.Kind), s.Command, s.Cwd, s.TmuxTarget, s.PanePID, string(s.Status), s.ExitCode, s.Name, s.Project, s.ID,
+		string(s.Kind), s.Command, s.Cwd, s.TmuxTarget, s.PanePID, string(s.Status), s.ExitCode, s.Name, s.Project, s.RestartCount, nullPort(s.Port), s.ID,
 	)
+	return err
+}
+
+func nullPort(p int) any {
+	if p == 0 {
+		return nil
+	}
+	return p
+}
+
+func (db *DB) Audit(caller, action, target, result string) error {
+	if caller == "" {
+		caller = "cli"
+	}
+	_, err := db.sql.Exec(`INSERT INTO audit (ts, caller, action, target, result) VALUES (?, ?, ?, ?, ?)`,
+		time.Now().UTC().Format(time.RFC3339), caller, action, target, result)
 	return err
 }
 
@@ -136,11 +188,13 @@ func (db *DB) Delete(id int64) error {
 }
 
 func (db *DB) Get(id int64) (Session, error) {
-	return scanSession(db.sql.QueryRow(`SELECT id, project, name, kind, command, cwd, tmux_target, pane_pid, created_at, status, exit_code FROM sessions WHERE id=?`, id))
+	return scanSession(db.sql.QueryRow(sessionSelect + ` WHERE id=?`, id))
 }
 
+const sessionSelect = `SELECT id, project, name, kind, command, cwd, tmux_target, pane_pid, created_at, status, exit_code, COALESCE(restart_count,0), COALESCE(port,0) FROM sessions`
+
 func (db *DB) List(includeExited bool) ([]Session, error) {
-	q := `SELECT id, project, name, kind, command, cwd, tmux_target, pane_pid, created_at, status, exit_code FROM sessions`
+	q := sessionSelect
 	if !includeExited {
 		q += ` WHERE status='running'`
 	}
@@ -176,7 +230,7 @@ func (db *DB) ListByKind(kind Kind, includeExited bool) ([]Session, error) {
 }
 
 func (db *DB) FindByName(name string) ([]Session, error) {
-	rows, err := db.sql.Query(`SELECT id, project, name, kind, command, cwd, tmux_target, pane_pid, created_at, status, exit_code FROM sessions WHERE name=?`, name)
+	rows, err := db.sql.Query(sessionSelect+` WHERE name=?`, name)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +247,7 @@ func (db *DB) FindByName(name string) ([]Session, error) {
 }
 
 func (db *DB) GetByProjectName(project, name string) (Session, error) {
-	return scanSession(db.sql.QueryRow(`SELECT id, project, name, kind, command, cwd, tmux_target, pane_pid, created_at, status, exit_code FROM sessions WHERE project=? AND name=?`, project, name))
+	return scanSession(db.sql.QueryRow(sessionSelect+` WHERE project=? AND name=?`, project, name))
 }
 
 func (db *DB) NamesInProject(project string, kind Kind) ([]string, error) {
@@ -222,7 +276,8 @@ func scanSession(row rowScanner) (Session, error) {
 	var kind, status, created, command, cwd, target sql.NullString
 	var pid sql.NullInt64
 	var exit sql.NullInt64
-	err := row.Scan(&s.ID, &s.Project, &s.Name, &kind, &command, &cwd, &target, &pid, &created, &status, &exit)
+	var restarts, port sql.NullInt64
+	err := row.Scan(&s.ID, &s.Project, &s.Name, &kind, &command, &cwd, &target, &pid, &created, &status, &exit, &restarts, &port)
 	if err != nil {
 		return Session{}, err
 	}
@@ -243,6 +298,8 @@ func scanSession(row rowScanner) (Session, error) {
 		n := int(exit.Int64)
 		s.ExitCode = &n
 	}
+	s.RestartCount = int(restarts.Int64)
+	s.Port = int(port.Int64)
 	return s, nil
 }
 

@@ -34,7 +34,15 @@ func HasDevhubSessions(client tmux.Client) (bool, error) {
 	return false, nil
 }
 
+func RunForever(client tmux.Client, db *registry.DB, statusPath string, interval time.Duration, stop <-chan struct{}) error {
+	return runLoop(client, db, statusPath, interval, stop, true)
+}
+
 func RunLoop(client tmux.Client, db *registry.DB, statusPath string, interval time.Duration, stop <-chan struct{}) error {
+	return runLoop(client, db, statusPath, interval, stop, false)
+}
+
+func runLoop(client tmux.Client, db *registry.DB, statusPath string, interval time.Duration, stop <-chan struct{}, forever bool) error {
 	sampler := NewSampler(nil)
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
@@ -44,7 +52,7 @@ func RunLoop(client tmux.Client, db *registry.DB, statusPath string, interval ti
 		if err != nil {
 			return err
 		}
-		if !alive {
+		if !alive && !forever {
 			return errNoSessions
 		}
 		panes, err := client.ListPanes()

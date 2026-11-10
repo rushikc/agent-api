@@ -1,0 +1,71 @@
+---
+description: Every plan must end with a "Verify and commit" section. Run lint, typecheck, and build for the touched packages, then make a commit decision. Commit substantial work. Leave small work or no-change work uncommitted. Never push.
+alwaysApply: true
+---
+
+# Verify and commit a finished plan
+
+## Required plan footer (overrides defaults)
+
+This rule is the user's standing instruction to commit finished plans. It overrides any default "don't commit unless asked" git guidance. Decide yourself. Do not ask. Do not push.
+
+Every plan MUST end with a final section titled **"Verify and commit"**, placed after any verify steps supplied in the prompt. Prompt-supplied verify steps (tests, tsc, "don't touch X", etc.) are merged into this section, never a replacement for it. Do not copy the ending of earlier plans in this session; apply this footer fresh every time, including for short or follow-up plans.
+
+The section must contain:
+1. The lint, typecheck, and build commands for the touched packages (see below).
+2. A commit decision: **Commit**, listing the files to stage and the one-line message, or **No commit**, with the reason (small change, or no repo files changed).
+3. "Do not push."
+
+In agent execution, run this section after the implementation, exactly as the plan lists it.
+
+## Find the repo
+
+Work inside the git repo that owns the touched files (`git rev-parse --show-toplevel`). If a plan touches several repos, run the checks, the commit decision, and the commit separately in each. Never run git from the parent `projects` folder.
+
+## Lint, typecheck, and build
+
+Skip this pass only for plan-file-only, docs-only, or rule-only edits.
+
+1. **Touched packages.** For each touched file, the package is the nearest folder above it with a `package.json` (Node) or `go.mod` (Go), for example the repo root, `functions/`, or `server/`.
+2. **Node packages.** Pick the package manager from the lockfile: `pnpm-lock.yaml` means pnpm, `yarn.lock` means yarn, `bun.lock`/`bun.lockb` means bun, anything else means npm. Run inside that package (`--prefix <dir>`, `-C <dir>`, or `cd`). From its `scripts`, run what exists:
+   - Lint: `lint`
+   - Typecheck: `typecheck` (or `type-check`). If none exists and the package has a `tsconfig.json`, run `npx tsc --noEmit` (with `-p <tsconfig>` when the root config only holds project references). If `build` already runs `tsc`, the build covers the typecheck. Plain JS packages skip the typecheck.
+   - Build: `build`
+3. **Go modules.** Use the `Makefile` targets when present (`make lint`, `make build`). Otherwise run `go vet ./...` and `go build ./...`. Run `gofmt -l .` and fix any files it lists.
+4. If a touched package has no matching command, skip that step and say so in the summary.
+
+Rules for this pass:
+- ESLint is not a typecheck. Dev-server HMR and checker overlays (such as `vite-plugin-checker`) don't replace the typecheck. Treat a type overlay as a failure.
+- Fix every error the pass reports. Don't dismiss unused imports, missing library exports, or callback type errors as noise.
+- After toolchain or typecheck config changes, restart the dev server. Don't reuse a leftover dev or preview server on the same port.
+- Don't run the full test suite unless the prompt asks for it. The user runs tests. Run targeted tests the prompt lists, and project-specific test rules in `.cursor/rules` still apply.
+
+## When to commit
+
+Judge by the kind of change, not the number of files.
+
+**Commit** when the plan adds or changes a flow, user interaction, backend behavior, API, data model, or a multi-part UI, or is otherwise a substantial feature, fix, or refactor. This holds even if it touches only 1-3 files.
+
+**No commit** for small work: a minor UI tweak, a copy edit, a one-off fix, or a rule or docs update.
+
+**No commit** for deploy, ops, or verification-only plans that change no tracked files. End those with "No commit: no repo files changed."
+
+## What to commit
+
+- Stage only files this plan created or edited, including a cross-cutting edit, by explicit path. Never `git add -A` or `git add .`.
+- Leave other dirty and untracked files unstaged, even if they look related.
+- Don't commit secrets (`.env`, credentials, keys, service-account JSON). Warn instead.
+- If the plan changed no files, don't create an empty commit.
+- If lint, typecheck, or build still fails, don't commit. Report what's failing.
+
+## Message
+
+One line: `type: description`. Types: `feat`, `fix`, `refactor`, `test`, `doc`, `chore`. Short and lowercase, in the same voice as that repo's `git log`.
+
+```text
+feat: xyz added
+```
+
+## How
+
+Follow the repo's git safety protocol. In parallel, run `git status`, `git diff` (staged and unstaged), and recent `git log`. Stage the plan's files by path. Commit with a HEREDOC message. Then run `git status` to confirm the commit went through and unrelated local changes are still unstaged. Do not push, amend, or rebase.

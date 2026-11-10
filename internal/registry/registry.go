@@ -230,7 +230,47 @@ SELECT id, project, name, kind, command, cwd, tmux_target, pane_pid, created_at,
 			}
 		}
 	}
+	_ = db.sql.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&v)
+	if v < 5 {
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS secret_names (
+  name TEXT PRIMARY KEY
+);`,
+			`INSERT OR IGNORE INTO schema_migrations(version) VALUES (5);`,
+		} {
+			if _, err := db.sql.Exec(stmt); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
+}
+
+func (db *DB) PutSecretName(name string) error {
+	_, err := db.sql.Exec(`INSERT OR REPLACE INTO secret_names(name) VALUES (?)`, name)
+	return err
+}
+
+func (db *DB) DeleteSecretName(name string) error {
+	_, err := db.sql.Exec(`DELETE FROM secret_names WHERE name=?`, name)
+	return err
+}
+
+func (db *DB) ListSecretNames() ([]string, error) {
+	rows, err := db.sql.Query(`SELECT name FROM secret_names ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
 }
 
 func (db *DB) Insert(s Session) (int64, error) {

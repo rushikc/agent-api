@@ -36,6 +36,7 @@ func NewFake() *FakeEngine {
 	}
 }
 
+func (f *FakeEngine) Ping() error         { return nil }
 func (f *FakeEngine) RuntimeName() string { return "fake" }
 
 func (f *FakeEngine) HasImage(_ context.Context, tag string) bool {

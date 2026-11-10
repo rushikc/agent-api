@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"syscall"
+
+	"github.com/rushikesh/devhub/internal/client"
 	"github.com/rushikesh/devhub/internal/config"
 	"github.com/rushikesh/devhub/internal/core"
 	"github.com/rushikesh/devhub/internal/daemon"
@@ -131,6 +134,43 @@ func tmuxparse(v string) (int, int, error) {
 	return tmux.ParseVersion(v)
 }
 
+func newExecEnvCmd() *cobra.Command {
+	var id int64
+	cmd := &cobra.Command{
+		Use:    "exec-env",
+		Short:  "Inject resolved secrets and exec a command",
+		Hidden: true,
+		Args:   cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if id == 0 {
+				return fmt.Errorf("--id is required")
+			}
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			if err := daemon.Ensure(cfg); err != nil {
+				return err
+			}
+			c := client.Unix(cfg, "exec-env")
+			env, err := c.ExecEnv(id)
+			if err != nil {
+				return err
+			}
+			for k, v := range env {
+				_ = os.Setenv(k, v)
+			}
+			bin, err := exec.LookPath(args[0])
+			if err != nil {
+				bin = args[0]
+			}
+			return syscall.Exec(bin, args, os.Environ())
+		},
+	}
+	cmd.Flags().Int64Var(&id, "id", 0, "session id")
+	return cmd
+}
+
 func newReloadCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "reload",
@@ -146,7 +186,12 @@ func newReloadCmd() *cobra.Command {
 }
 
 func printV3Doctor() {
-	fmt.Println("docker:", e2eRuntime())
+	name := e2eRuntime()
+	if err := e2e.Ping(); err != nil {
+		fmt.Printf("docker: %s installed but not running (%s)\n", name, err)
+	} else {
+		fmt.Println("docker:", name)
+	}
 	if path, err := exec.LookPath("gcloud"); err == nil {
 		fmt.Println("gcloud:", path)
 	} else {

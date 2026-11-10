@@ -15,6 +15,46 @@ type StartShadowArgs struct {
 	Name    string `json:"name,omitempty"`
 }
 
+type EmptyArgs struct{}
+
+type AliasArgs struct {
+	Alias string `json:"alias"`
+}
+
+type GCPLogsArgs struct {
+	Alias    string `json:"alias"`
+	Filter   string `json:"filter,omitempty"`
+	Since    string `json:"since,omitempty"`
+	Severity string `json:"severity,omitempty"`
+	Limit    int    `json:"limit,omitempty"`
+}
+
+type GCPBQArgs struct {
+	Alias string `json:"alias"`
+	SQL   string `json:"sql"`
+}
+
+type GCPPubsubArgs struct {
+	Alias        string `json:"alias"`
+	Subscription string `json:"subscription,omitempty"`
+}
+
+type GCPGCSArgs struct {
+	Alias  string `json:"alias"`
+	Bucket string `json:"bucket,omitempty"`
+	Prefix string `json:"prefix,omitempty"`
+}
+
+type E2ERunArgs struct {
+	Project string `json:"project"`
+	Grep    string `json:"grep,omitempty"`
+	Shard   string `json:"shard,omitempty"`
+}
+
+type E2EIDArgs struct {
+	ID string `json:"id"`
+}
+
 func RunStdio(cfg *config.Config) error {
 	_ = daemon.Ensure(cfg)
 	c := client.Unix(cfg, "mcp")
@@ -93,69 +133,51 @@ func RunStdio(cfg *config.Config) error {
 		return textResult(s, err)
 	})
 
-	type gcpArgs struct {
-		Alias        string `json:"alias,omitempty"`
-		Filter       string `json:"filter,omitempty"`
-		Since        string `json:"since,omitempty"`
-		Severity     string `json:"severity,omitempty"`
-		Limit        int    `json:"limit,omitempty"`
-		SQL          string `json:"sql,omitempty"`
-		Subscription string `json:"subscription,omitempty"`
-		Bucket       string `json:"bucket,omitempty"`
-		Prefix       string `json:"prefix,omitempty"`
-		Project      string `json:"project,omitempty"`
-		Grep         string `json:"grep,omitempty"`
-		Shard        string `json:"shard,omitempty"`
-		ID           string `json:"id,omitempty"`
-	}
-	addGCP := func(name, desc string, fn func(context.Context, *mcp.CallToolRequest, gcpArgs) (*mcp.CallToolResult, any, error)) {
-		mcp.AddTool(server, &mcp.Tool{Name: name, Description: desc}, fn)
-	}
-	addGCP("gcp_list_projects", "List configured GCP aliases", func(ctx context.Context, req *mcp.CallToolRequest, args gcpArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "gcp_list_projects", Description: "List configured GCP aliases"}, func(ctx context.Context, req *mcp.CallToolRequest, args EmptyArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.GCPListProjects()
 		return textResult(s, err)
 	})
-	addGCP("gcp_logs", "Read Cloud Logging (allowlisted aliases)", func(ctx context.Context, req *mcp.CallToolRequest, args gcpArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "gcp_logs", Description: "Read Cloud Logging (allowlisted aliases)"}, func(ctx context.Context, req *mcp.CallToolRequest, args GCPLogsArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.GCPCall(args.Alias, "logs.read", map[string]any{"filter": args.Filter, "since": args.Since, "severity": args.Severity, "limit": args.Limit})
 		return textResult(s, err)
 	})
-	addGCP("gcp_bq_query", "Run a SELECT BigQuery (allowlisted)", func(ctx context.Context, req *mcp.CallToolRequest, args gcpArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "gcp_bq_query", Description: "Run a SELECT BigQuery (allowlisted)"}, func(ctx context.Context, req *mcp.CallToolRequest, args GCPBQArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.GCPCall(args.Alias, "bq.query", map[string]any{"sql": args.SQL})
 		return textResult(s, err)
 	})
-	addGCP("gcp_run_status", "Cloud Run services and traffic", func(ctx context.Context, req *mcp.CallToolRequest, args gcpArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "gcp_run_status", Description: "Cloud Run services and traffic"}, func(ctx context.Context, req *mcp.CallToolRequest, args AliasArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.GCPCall(args.Alias, "run.status", map[string]any{})
 		return textResult(s, err)
 	})
-	addGCP("gcp_pubsub_peek", "Peek Pub/Sub without ack", func(ctx context.Context, req *mcp.CallToolRequest, args gcpArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "gcp_pubsub_peek", Description: "Peek Pub/Sub without ack"}, func(ctx context.Context, req *mcp.CallToolRequest, args GCPPubsubArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.GCPCall(args.Alias, "pubsub.peek", map[string]any{"subscription": args.Subscription})
 		return textResult(s, err)
 	})
-	addGCP("gcp_gcs_list", "List GCS objects (metadata)", func(ctx context.Context, req *mcp.CallToolRequest, args gcpArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "gcp_gcs_list", Description: "List GCS objects (metadata)"}, func(ctx context.Context, req *mcp.CallToolRequest, args GCPGCSArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.GCPCall(args.Alias, "gcs.list", map[string]any{"bucket": args.Bucket, "prefix": args.Prefix})
 		return textResult(s, err)
 	})
-	addGCP("e2e_run", "Start an isolated E2E run", func(ctx context.Context, req *mcp.CallToolRequest, args gcpArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "e2e_run", Description: "Start an isolated E2E run"}, func(ctx context.Context, req *mcp.CallToolRequest, args E2ERunArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.E2ERun(args.Project, args.Grep, args.Shard)
 		return textResult(s, err)
 	})
-	addGCP("e2e_status", "E2E run status", func(ctx context.Context, req *mcp.CallToolRequest, args gcpArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "e2e_status", Description: "E2E run status"}, func(ctx context.Context, req *mcp.CallToolRequest, args E2EIDArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.E2EStatus(args.ID)
 		return textResult(s, err)
 	})
-	addGCP("e2e_failures", "Failing tests and artifacts", func(ctx context.Context, req *mcp.CallToolRequest, args gcpArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "e2e_failures", Description: "Failing tests and artifacts"}, func(ctx context.Context, req *mcp.CallToolRequest, args E2EIDArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.E2EFailures(args.ID)
 		return textResult(s, err)
 	})
-	addGCP("e2e_logs", "E2E run logs", func(ctx context.Context, req *mcp.CallToolRequest, args gcpArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "e2e_logs", Description: "E2E run logs"}, func(ctx context.Context, req *mcp.CallToolRequest, args E2EIDArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.E2ELogs(args.ID)
 		return textResult(s, err)
 	})
-	addGCP("secrets_list", "Secret names and whether they resolve (never values)", func(ctx context.Context, req *mcp.CallToolRequest, args gcpArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "secrets_list", Description: "Secret names and whether they resolve (never values)"}, func(ctx context.Context, req *mcp.CallToolRequest, args EmptyArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.SecretsList()
 		return textResult(s, err)
 	})
-	addGCP("events_recent", "Recent daemon events (crashes, E2E, GCP errors)", func(ctx context.Context, req *mcp.CallToolRequest, args gcpArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "events_recent", Description: "Recent daemon events (crashes, E2E, GCP errors)"}, func(ctx context.Context, req *mcp.CallToolRequest, args EmptyArgs) (*mcp.CallToolResult, any, error) {
 		s, err := t.EventsRecent()
 		return textResult(s, err)
 	})

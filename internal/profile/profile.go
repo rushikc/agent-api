@@ -339,12 +339,29 @@ func Down(svc *core.Service, project string, all bool) error {
 			_ = killTreeFn(int32(r.PanePID))
 		}
 		_ = svc.Stop(fmt.Sprintf("%s/%s", r.Project, r.Name))
+		if r.Port > 0 {
+			_ = janitor.FreePort(r.Port, rows, nil)
+		}
 	}
 	return nil
 }
 
-func Init(dir string) (*Profile, error) {
-	pr := &Profile{Name: filepath.Base(dir), Path: dir, Env: map[string]string{}, Windows: []Window{{Name: "v1", Cwd: "."}}}
+func Init(dir string, cfg *config.Config) (*Profile, error) {
+	name := filepath.Base(dir)
+	if cfg != nil {
+		want := config.CanonPath(dir)
+		for n, p := range cfg.Projects {
+			abs, err := config.ExpandPath(p)
+			if err != nil {
+				continue
+			}
+			if config.CanonPath(abs) == want {
+				name = n
+				break
+			}
+		}
+	}
+	pr := &Profile{Name: name, Path: dir, Env: map[string]string{}, Windows: []Window{{Name: "v1", Cwd: "."}}}
 	if b, err := os.ReadFile(filepath.Join(dir, "package.json")); err == nil {
 		var pkg struct {
 			Scripts map[string]string `json:"scripts"`

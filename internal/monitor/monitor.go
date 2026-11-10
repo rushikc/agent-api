@@ -9,57 +9,12 @@ import (
 	"time"
 
 	"github.com/rushikesh/devhub/internal/registry"
-	"github.com/shirou/gopsutil/v3/process"
 )
 
 type ProcSource interface {
 	Children(pid int32) ([]int32, error)
 	CPUTimes(pid int32) (float64, error)
 	RSS(pid int32) (uint64, error)
-}
-
-type GopsutilSource struct{}
-
-func (GopsutilSource) Children(pid int32) ([]int32, error) {
-	p, err := process.NewProcess(pid)
-	if err != nil {
-		return nil, err
-	}
-	kids, err := p.Children()
-	if err != nil {
-		return nil, nil
-	}
-	out := make([]int32, 0, len(kids))
-	for _, k := range kids {
-		if k != nil {
-			out = append(out, k.Pid)
-		}
-	}
-	return out, nil
-}
-
-func (GopsutilSource) CPUTimes(pid int32) (float64, error) {
-	p, err := process.NewProcess(pid)
-	if err != nil {
-		return 0, err
-	}
-	t, err := p.Times()
-	if err != nil || t == nil {
-		return 0, err
-	}
-	return t.User + t.System, nil
-}
-
-func (GopsutilSource) RSS(pid int32) (uint64, error) {
-	p, err := process.NewProcess(pid)
-	if err != nil {
-		return 0, err
-	}
-	m, err := p.MemoryInfo()
-	if err != nil || m == nil {
-		return 0, err
-	}
-	return m.RSS, nil
 }
 
 type Sample struct {
@@ -81,7 +36,7 @@ type cpuPoint struct {
 
 func NewSampler(src ProcSource) *Sampler {
 	if src == nil {
-		src = GopsutilSource{}
+		src = &DefaultSource{}
 	}
 	return &Sampler{src: src, last: map[int32]cpuPoint{}}
 }

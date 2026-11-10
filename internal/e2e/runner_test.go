@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rushikesh/devhub/internal/config"
+	"github.com/rushikesh/devhub/internal/events"
 	"github.com/rushikesh/devhub/internal/profile"
 	"github.com/rushikesh/devhub/internal/registry"
 )
@@ -119,6 +120,40 @@ func TestLifecycleCancel(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("not cancelled")
+}
+
+func TestEnqueueNilEngineFails(t *testing.T) {
+	db, err := registry.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	bus := events.NewBus()
+	var kinds []string
+	bus.Subscribe(func(e events.Event) { kinds = append(kinds, e.Type) })
+	q := NewQueue(config.Default().WithDir(t.TempDir()), db, nil, bus, nil)
+	_, err = q.Enqueue(RunRequest{Project: "demo"}, &profile.Profile{Name: "demo"})
+	if err == nil || err != ErrEngineDown {
+		t.Fatalf("err %v", err)
+	}
+	if len(kinds) != 1 || kinds[0] != events.E2EFailed {
+		t.Fatalf("events %v", kinds)
+	}
+	rows, _ := db.ListE2ERuns("demo", 5)
+	if len(rows) != 1 || rows[0].Status != "failed" {
+		t.Fatalf("rows %+v", rows)
+	}
+}
+
+func TestDaemonDoesNotFallbackToFake(t *testing.T) {
+	eng, err := NewDocker()
+	if err != nil {
+		if eng != nil {
+			t.Fatal("failed NewDocker must return nil engine")
+		}
+		return
+	}
+	_ = eng
 }
 
 func TestSummaryJSON(t *testing.T) {

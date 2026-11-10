@@ -1,7 +1,9 @@
 package registry
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rushikesh/devhub/internal/tmux"
@@ -104,6 +106,20 @@ func TestReconcile(t *testing.T) {
 	}
 }
 
+func TestReconcileKeepsStopped(t *testing.T) {
+	db := tempDB(t)
+	if _, err := db.Insert(Session{Project: "krayon", Name: "web", Kind: KindShadow, Status: StatusStopped, TmuxTarget: "dh-shadow-krayon:@9"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Reconcile(nil); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := db.GetByProjectName("krayon", "web")
+	if s.Status != StatusStopped {
+		t.Fatalf("stopped flipped to %s", s.Status)
+	}
+}
+
 func TestReconcileFakeTmux(t *testing.T) {
 	db := tempDB(t)
 	fake := tmux.NewFake()
@@ -132,5 +148,37 @@ func TestReconcileFakeTmux(t *testing.T) {
 	s, _ = db.GetByProjectName("krayon", "v1")
 	if s.Status != StatusExited || s.ExitCode == nil || *s.ExitCode != 1 {
 		t.Fatalf("%+v", s)
+	}
+}
+
+func TestSecretNamesNeverStoreValues(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "devhub.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	secret := "supersecret-value-xyz"
+	if err := db.PutSecretName("api"); err != nil {
+		t.Fatal(err)
+	}
+	names, err := db.ListSecretNames()
+	if err != nil || len(names) != 1 || names[0] != "api" {
+		t.Fatalf("%v %v", names, err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), secret) {
+		t.Fatal("value in db")
+	}
+	if err := db.DeleteSecretName("api"); err != nil {
+		t.Fatal(err)
+	}
+	names, _ = db.ListSecretNames()
+	if len(names) != 0 {
+		t.Fatalf("%v", names)
 	}
 }

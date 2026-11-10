@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/rushikesh/devhub/internal/config"
@@ -84,6 +83,7 @@ func newRoot() *cobra.Command {
 		newE2EUICmd(),
 		newAlertsUICmd(),
 		newReloadCmd(),
+		newExecEnvCmd(),
 	)
 	return cmd
 }
@@ -101,15 +101,19 @@ func withServiceOpt(needTmux bool, fn func(*core.Service, []string) error) func(
 		if err != nil {
 			return err
 		}
-		_ = daemon.Ensure(cfg)
+		if err := daemon.Ensure(cfg); err != nil {
+			return err
+		}
 		svc, err := core.Open()
 		if err != nil {
 			return err
 		}
 		defer svc.Close()
-		if c := tryDaemon(cfg); c != nil {
-			svc.Remote = c
+		c := tryDaemon(cfg)
+		if c == nil {
+			return fmt.Errorf("daemon is not running")
 		}
+		svc.Remote = c
 		if svc.KeybindingsStale() {
 			_ = svc.ApplyKeybindingsForce(true)
 		}
@@ -163,7 +167,7 @@ func newShadowCmd() *cobra.Command {
 }
 
 func newLsCmd() *cobra.Command {
-	var all bool
+	var all, asJSON bool
 	cmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List sessions",
@@ -172,23 +176,24 @@ func newLsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// Second sample so CPU% is non-zero when processes are busy.
 			time.Sleep(200 * time.Millisecond)
 			rows, err = svc.List(all)
 			if err != nil {
 				return err
 			}
-			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "PROJECT\tNAME\tKIND\tSTATUS\tCPU%\tRSS\tCOMMAND")
+			if asJSON {
+				return printJSON(rows)
+			}
+			var out [][]string
 			for _, r := range rows {
 				s := r.Session
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%.1f\t%s\t%s\n",
-					s.Project, s.Name, s.Kind, s.Status, r.CPUPct, formatRSS(r.RSSBytes), s.Command)
+				out = append(out, []string{s.Project, s.Name, string(s.Kind), string(s.Status), fmt.Sprintf("%.1f", r.CPUPct), formatRSS(r.RSSBytes), s.Command})
 			}
-			return w.Flush()
+			return printTable(os.Stdout, []string{"PROJECT", "NAME", "KIND", "STATUS", "CPU%", "RSS", "COMMAND"}, out)
 		}),
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "include exited sessions")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "raw JSON")
 	return cmd
 }
 
@@ -316,6 +321,11 @@ func newProjectCmd() *cobra.Command {
 		RunE: withServiceOpt(false, func(svc *core.Service, args []string) error {
 			if err := svc.Cfg.AddProject(args[0], args[1]); err != nil {
 				return err
+			}
+			if c := tryDaemon(svc.Cfg); c != nil {
+				if err := c.Reload(); err != nil {
+					return err
+				}
 			}
 			fmt.Printf("added project %s -> %s\n", args[0], svc.Cfg.Projects[args[0]])
 			return nil

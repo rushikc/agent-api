@@ -56,8 +56,9 @@ type GCSAPI interface {
 }
 
 type AuthInfo struct {
-	Email    string   `json:"email"`
-	Projects []string `json:"reachable,omitempty"`
+	Email        string   `json:"email"`
+	QuotaProject string   `json:"quota_project,omitempty"`
+	Projects     []string `json:"reachable,omitempty"`
 }
 
 type AuthAPI interface {

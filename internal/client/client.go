@@ -175,6 +175,18 @@ func (c *Client) ProfileDown(project string) error {
 	return c.do(http.MethodPost, "/v1/profiles/"+project+"/down", nil, nil)
 }
 
+func (c *Client) Reload() error {
+	return c.do(http.MethodPost, "/v1/reload", nil, nil)
+}
+
+func (c *Client) ExecEnv(id int64) (map[string]string, error) {
+	var out struct {
+		Env map[string]string `json:"env"`
+	}
+	err := c.do(http.MethodGet, fmt.Sprintf("/v1/sessions/%d/exec-env", id), nil, &out)
+	return out.Env, err
+}
+
 func (c *Client) Profiles() (json.RawMessage, error) {
 	var raw json.RawMessage
 	err := c.do(http.MethodGet, "/v1/profiles", nil, &raw)

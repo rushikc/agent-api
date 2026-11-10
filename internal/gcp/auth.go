@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -62,11 +61,13 @@ func (a *adcAuth) Check(ctx context.Context) (AuthInfo, error) {
 	if err != nil {
 		return AuthInfo{}, fmt.Errorf("ADC: %w (run: gcloud auth application-default login)", err)
 	}
-	info := AuthInfo{Email: adcEmail(creds.JSON)}
+	email, quota := ParseADC(creds.JSON)
 	if a.impersonate != "" {
-		info.Email = a.impersonate + " (impersonated)"
+		email = a.impersonate
+	} else if email == "" {
+		email = fetchUserEmail(ctx, creds.TokenSource)
 	}
-	return info, nil
+	return AuthInfo{Email: email, QuotaProject: quota}, nil
 }
 
 func (a *adcAuth) Reachable(ctx context.Context, projectID string) bool {
@@ -84,19 +85,56 @@ func (a *adcAuth) Reachable(ctx context.Context, projectID string) bool {
 	return resp.StatusCode < 400
 }
 
-func adcEmail(raw []byte) string {
+var (
+	userinfoURL    = "https://www.googleapis.com/oauth2/v2/userinfo"
+	userinfoClient = http.DefaultClient
+)
+
+func ParseADC(raw []byte) (email, quota string) {
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return "adc"
-	}
-	if v, ok := m["client_email"].(string); ok && v != "" {
-		return v
+		return "", ""
 	}
 	if v, ok := m["quota_project_id"].(string); ok {
-		return v
+		quota = v
 	}
-	if strings.Contains(string(raw), "authorized_user") {
-		return "authorized_user (gcloud ADC)"
+	if v, ok := m["client_email"].(string); ok && v != "" {
+		return v, quota
 	}
-	return "adc"
+	return "", quota
+}
+
+func adcEmail(raw []byte) string {
+	email, _ := ParseADC(raw)
+	return email
+}
+
+func fetchUserEmail(ctx context.Context, ts oauth2.TokenSource) string {
+	if ts == nil {
+		return ""
+	}
+	tok, err := ts.Token()
+	if err != nil || tok == nil || tok.AccessToken == "" {
+		return ""
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, userinfoURL, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+	resp, err := userinfoClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return ""
+	}
+	var body struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return ""
+	}
+	return body.Email
 }

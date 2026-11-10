@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -66,5 +67,32 @@ func TestHealthAndCreateUnix(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("create %s", resp.Status)
+	}
+}
+
+func TestReloadUpdatesProjects(t *testing.T) {
+	dir := t.TempDir()
+	proj := t.TempDir()
+	onDisk := config.Default().WithDir(dir)
+	onDisk.Projects = map[string]string{"demo": proj}
+	if err := onDisk.Save(); err != nil {
+		t.Fatal(err)
+	}
+	live := config.Default().WithDir(dir)
+	db, err := registry.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	svc := &core.Service{Cfg: live, Tmux: tmux.NewFake(), DB: db, Sampler: monitor.NewSampler(nil)}
+	srv := New(live, svc, nil)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/reload", nil)
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != 204 {
+		t.Fatalf("status %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := live.ProjectPath("demo"); err != nil {
+		t.Fatal(err)
 	}
 }

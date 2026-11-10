@@ -13,8 +13,6 @@ import (
 	"github.com/rushikesh/devhub/internal/config"
 	"github.com/rushikesh/devhub/internal/monitor"
 	"github.com/rushikesh/devhub/internal/registry"
-	"github.com/shirou/gopsutil/v3/net"
-	"github.com/shirou/gopsutil/v3/process"
 )
 
 type Port struct {
@@ -64,26 +62,7 @@ func SelfUID() uint32 {
 }
 
 func ListPorts(sessions []registry.Session, src monitor.ProcSource) ([]Port, error) {
-	conns, err := net.Connections("tcp")
-	if err != nil || len(conns) == 0 {
-		return listPortsLsof(sessions, src)
-	}
-	var out []Port
-	seen := map[int]bool{}
-	for _, c := range conns {
-		if c.Status != "LISTEN" {
-			continue
-		}
-		p := int(c.Laddr.Port)
-		if p == 0 || seen[p] {
-			continue
-		}
-		seen[p] = true
-		owner, proj, name, sid := matchSession(int32(c.Pid), sessions, src)
-		cmd := procName(int32(c.Pid))
-		out = append(out, Port{Port: p, PID: int32(c.Pid), Cmd: cmd, Owner: owner, Project: proj, Name: name, SessionID: sid})
-	}
-	return out, nil
+	return listPortsLsof(sessions, src)
 }
 
 func listPortsLsof(sessions []registry.Session, src monitor.ProcSource) ([]Port, error) {
@@ -118,7 +97,7 @@ func listPortsLsof(sessions []registry.Session, src monitor.ProcSource) ([]Port,
 
 func matchSession(pid int32, sessions []registry.Session, src monitor.ProcSource) (owner, project, name string, id int64) {
 	if src == nil {
-		src = monitor.GopsutilSource{}
+		src = &monitor.DefaultSource{}
 	}
 	for _, s := range sessions {
 		if s.PanePID <= 0 {
@@ -142,20 +121,30 @@ func matchSession(pid int32, sessions []registry.Session, src monitor.ProcSource
 }
 
 func procName(pid int32) string {
-	p, err := process.NewProcess(pid)
-	if err != nil {
-		return ""
+	for _, p := range monitor.ReadPS() {
+		if p.PID == pid {
+			return p.Name
+		}
 	}
-	n, _ := p.Name()
-	return n
+	return ""
 }
 
 func ListOrphans(cfg *config.Config, sessions []registry.Session, src monitor.ProcSource) ([]Orphan, error) {
+	return ListOrphansAt(cfg, sessions, src, monitor.TmuxServerPID("devhub"), nil)
+}
+
+func ListOrphansAt(cfg *config.Config, sessions []registry.Session, src monitor.ProcSource, tmuxPID int32, procs []monitor.Proc) ([]Orphan, error) {
 	if src == nil {
-		src = monitor.GopsutilSource{}
+		src = &monitor.DefaultSource{}
+	}
+	if procs == nil {
+		procs = monitor.ReadPS()
 	}
 	owned := map[int32]bool{}
 	for _, s := range sessions {
+		if s.Status != registry.StatusRunning {
+			continue
+		}
 		if s.PanePID > 0 {
 			for _, p := range monitor.WalkTree(src, int32(s.PanePID)) {
 				owned[p] = true
@@ -166,40 +155,31 @@ func ListOrphans(cfg *config.Config, sessions []registry.Session, src monitor.Pr
 	for _, n := range cfg.Janitor.ProcessNames {
 		names[strings.ToLower(n)] = true
 	}
-	procs, err := process.Processes()
-	if err != nil {
-		return nil, err
+	live := map[int32]bool{}
+	for _, x := range procs {
+		live[x.PID] = true
 	}
 	var out []Orphan
 	for _, p := range procs {
-		if p == nil {
+		if !names[strings.ToLower(p.Name)] {
 			continue
 		}
-		ppid, err := p.Ppid()
-		if err != nil || ppid != 1 {
+		if owned[p.PID] {
 			continue
 		}
-		n, _ := p.Name()
-		if !names[strings.ToLower(n)] {
+		parentGone := !live[p.PPID]
+		if p.PPID != 1 && (tmuxPID == 0 || p.PPID != tmuxPID) && !parentGone {
 			continue
 		}
-		if owned[p.Pid] {
-			continue
+		cwd := p.Cwd
+		if cwd == "" {
+			cwd = monitor.CwdOf(p.PID)
 		}
-		cwd, _ := p.Cwd()
 		proj := projectForCwd(cfg, cwd)
 		if proj == "" {
 			continue
 		}
-		cpu, _ := p.CPUPercent()
-		mem, _ := p.MemoryInfo()
-		var rss uint64
-		if mem != nil {
-			rss = mem.RSS
-		}
-		ct, _ := p.CreateTime()
-		age := time.Since(time.UnixMilli(ct)).Truncate(time.Second).String()
-		out = append(out, Orphan{PID: p.Pid, Name: n, Cwd: cwd, CPUPct: cpu, RSS: rss, Age: age, Project: proj})
+		out = append(out, Orphan{PID: p.PID, Name: p.Name, Cwd: cwd, CPUPct: p.CPUPct, RSS: p.RSS, Project: proj})
 	}
 	return out, nil
 }
@@ -229,74 +209,48 @@ type TreeKiller interface {
 	Running(pid int32) bool
 }
 
-type liveKiller struct{}
-
-func (liveKiller) Children(pid int32) ([]int32, error) {
-	p, err := process.NewProcess(pid)
-	if err != nil {
-		return nil, err
-	}
-	kids, err := p.Children()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]int32, 0, len(kids))
-	for _, k := range kids {
-		if k != nil {
-			out = append(out, k.Pid)
-		}
-	}
-	return out, nil
+type liveKiller struct {
+	kids  map[int32][]int32
+	procs map[int32]monitor.Proc
 }
 
-func (liveKiller) Name(pid int32) string {
-	p, err := process.NewProcess(pid)
-	if err != nil {
-		return ""
+func newLiveKiller() *liveKiller {
+	k := &liveKiller{kids: map[int32][]int32{}, procs: map[int32]monitor.Proc{}}
+	for _, p := range monitor.ReadPS() {
+		k.kids[p.PPID] = append(k.kids[p.PPID], p.PID)
+		k.procs[p.PID] = p
 	}
-	n, _ := p.Name()
-	return n
+	return k
 }
 
-func (liveKiller) UID(pid int32) uint32 {
-	p, err := process.NewProcess(pid)
-	if err != nil {
-		return 0
-	}
-	uids, _ := p.Uids()
-	if len(uids) == 0 {
-		return 0
-	}
-	return uint32(uids[0])
+func (k *liveKiller) Children(pid int32) ([]int32, error) {
+	return k.kids[pid], nil
 }
 
-func (liveKiller) Signal(pid int32, sig syscall.Signal) error {
-	p, err := process.NewProcess(pid)
-	if err != nil {
-		return err
-	}
-	if sig == syscall.SIGKILL {
-		return p.Kill()
-	}
-	return p.SendSignal(sig)
+func (k *liveKiller) Name(pid int32) string {
+	return k.procs[pid].Name
 }
 
-func (liveKiller) Running(pid int32) bool {
-	p, err := process.NewProcess(pid)
-	if err != nil {
-		return false
-	}
-	ok, _ := p.IsRunning()
-	return ok
+func (k *liveKiller) UID(pid int32) uint32 {
+	return uint32(k.procs[pid].UID)
+}
+
+func (k *liveKiller) Signal(pid int32, sig syscall.Signal) error {
+	return syscall.Kill(int(pid), sig)
+}
+
+func (k *liveKiller) Running(pid int32) bool {
+	err := syscall.Kill(int(pid), 0)
+	return err == nil
 }
 
 func KillTree(pid int32) error {
-	return KillTreeWith(pid, liveKiller{}, 10*time.Second)
+	return KillTreeWith(pid, newLiveKiller(), 10*time.Second)
 }
 
 func KillTreeWith(pid int32, k TreeKiller, wait time.Duration) error {
 	if k == nil {
-		k = liveKiller{}
+		k = newLiveKiller()
 	}
 	if wait <= 0 {
 		wait = 10 * time.Second
@@ -312,7 +266,10 @@ func KillTreeWith(pid int32, k TreeKiller, wait time.Duration) error {
 			return
 		}
 		seen[p] = true
-		kids, _ := k.Children(p)
+		kids, err := k.Children(p)
+		if err != nil {
+			kids = nil
+		}
 		for _, c := range kids {
 			visit(c)
 		}
@@ -341,7 +298,32 @@ func KillTreeWith(pid int32, k TreeKiller, wait time.Duration) error {
 			_ = k.Signal(p, syscall.SIGKILL)
 		}
 	}
+	if rs, ok := k.(interface{ Rescan([]int32) []int32 }); ok {
+		for _, p := range rs.Rescan(order) {
+			_ = k.Signal(p, syscall.SIGKILL)
+		}
+	}
 	return nil
+}
+
+func (k *liveKiller) Rescan(orig []int32) []int32 {
+	want := map[int32]bool{}
+	for _, p := range orig {
+		want[p] = true
+	}
+	fresh := newLiveKiller()
+	tmuxPID := monitor.TmuxServerPID("devhub")
+	var extra []int32
+	for pid, p := range fresh.procs {
+		if !want[pid] {
+			continue
+		}
+		if p.PPID == 1 || (tmuxPID != 0 && p.PPID == tmuxPID) {
+			extra = append(extra, pid)
+		}
+	}
+	*k = *fresh
+	return extra
 }
 
 func FreePort(port int, sessions []registry.Session, src monitor.ProcSource) error {

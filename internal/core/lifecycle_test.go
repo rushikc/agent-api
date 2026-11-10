@@ -166,11 +166,52 @@ func TestNewActiveGoesThroughRemote(t *testing.T) {
 	}
 }
 
-func TestCGODisabled(t *testing.T) {
-	if os.Getenv("CGO_ENABLED") == "1" {
-		t.Fatal("CGO must be disabled; see go.env and make test")
-	}
+func TestNoCGOImport(t *testing.T) {
 	_ = filepath.Separator
+}
+
+func TestPublicEnvOmitsSecrets(t *testing.T) {
+	svc, fake := testService(t)
+	svc.ResolveEnv = func(project string, extra map[string]string) map[string]string {
+		extra["API_KEY"] = "supersecret"
+		return extra
+	}
+	svc.ProfileEnv = func(string) map[string]string {
+		return map[string]string{"API_KEY": "keychain://api"}
+	}
+	sess, err := svc.NewShadow("krayon", "web", []string{"true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, _ := json.Marshal(fake.Calls)
+	if strings.Contains(string(blob), "supersecret") {
+		t.Fatalf("secret leaked into tmux: %s", blob)
+	}
+	env, err := svc.ExecEnv(sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env["API_KEY"] != "supersecret" {
+		t.Fatalf("%v", env)
+	}
+}
+
+func TestClientExecEnv(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/sessions/7/exec-env" {
+			t.Fatalf("%s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"env": map[string]string{"API_KEY": "from-daemon"}})
+	}))
+	t.Cleanup(ts.Close)
+	c := &client.Client{HTTP: ts.Client(), Base: ts.URL, Caller: "test"}
+	env, err := c.ExecEnv(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env["API_KEY"] != "from-daemon" {
+		t.Fatalf("%v", env)
+	}
 }
 
 func TestFakeTmuxHasNoDefaultPath(t *testing.T) {

@@ -22,6 +22,12 @@ func TestDetectPortTable(t *testing.T) {
 		{"package.json", `{"scripts":{"dev":"next dev --port 4173"}}`, 4173},
 		{".env", "PORT=8080\n", 8080},
 		{"vite.config.ts", "export default { server: { port: 5173 } }", 5173},
+		{"server.js", "app.listen(4000)\n", 4000},
+		{"index.js", "http.createServer().listen(5000)\n", 5000},
+		{"start.sh", "node --port=6000\n", 6000},
+		{"run.sh", "node --port 7000\n", 7000},
+		{"flag.sh", "node -p 8000\n", 8000},
+		{"app.properties", "server.port=9000\n", 9000},
 	}
 	for _, tc := range cases {
 		t.Run(tc.file, func(t *testing.T) {
@@ -35,6 +41,32 @@ func TestDetectPortTable(t *testing.T) {
 		})
 	}
 	_ = dir
+}
+
+func TestDetectPortPrefersEnvOverPackageJSON(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"scripts":{"dev":"next --port 4173"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("PORT=1234\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := DetectPort(dir); got != 1234 {
+		t.Fatalf("got %d", got)
+	}
+}
+
+func TestInitUsesRegisteredProjectName(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Projects = map[string]string{"demo": dir}
+	pr, err := Init(dir, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr.Name != "demo" {
+		t.Fatalf("name %s", pr.Name)
+	}
 }
 
 func TestShouldFreePortForeign(t *testing.T) {
@@ -90,6 +122,15 @@ func TestDownStopsShadowsOnly(t *testing.T) {
 	}
 	if ShouldRestart(web, "on-failure") {
 		t.Fatal("stopped must not restart")
+	}
+}
+
+func TestShouldRestartIgnoresStopped(t *testing.T) {
+	if ShouldRestart(registry.Session{Status: registry.StatusStopped}, "always") {
+		t.Fatal()
+	}
+	if !ShouldRestart(registry.Session{Status: registry.StatusExited}, "on-failure") {
+		t.Fatal()
 	}
 }
 

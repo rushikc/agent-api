@@ -145,6 +145,8 @@ func (s *Server) registerCore() {
 	s.Register("GET", "/v1/ports", s.listPorts)
 	s.Register("POST", "/v1/ports/{port}/free", s.freePort)
 	s.Register("GET", "/v1/orphans", s.listOrphans)
+	s.Register("GET", "/v1/sessions/{id}/exec-env", s.sessionExecEnv)
+	s.Register("POST", "/v1/reload", s.reloadConfig)
 }
 
 func (s *Server) sessID(r *http.Request) (int64, error) {
@@ -412,6 +414,33 @@ func (s *Server) listOrphans(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, orph)
+}
+
+func (s *Server) sessionExecEnv(w http.ResponseWriter, r *http.Request) {
+	id, err := s.sessID(r)
+	if err != nil {
+		http.Error(w, "bad id", 400)
+		return
+	}
+	env, err := s.Core.ExecEnv(id)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	writeJSON(w, map[string]any{"env": env})
+}
+
+func (s *Server) reloadConfig(w http.ResponseWriter, r *http.Request) {
+	if s.Cfg != nil {
+		if err := s.Cfg.Reload(); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+	}
+	if s.Core != nil {
+		_ = s.Core.ApplyKeybindings()
+	}
+	w.WriteHeader(204)
 }
 
 func ServeUnix(ctx context.Context, s *Server, sock string) error {

@@ -2,10 +2,14 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"io"
 )
 
+var ErrEngineDown = fmt.Errorf("Docker engine not running: start OrbStack/Docker Desktop/Colima")
+
 type Engine interface {
+	Ping() error
 	RuntimeName() string
 	HasImage(ctx context.Context, tag string) bool
 	BuildImage(ctx context.Context, dockerfileDir, dockerfile, tag string, w io.Writer) error

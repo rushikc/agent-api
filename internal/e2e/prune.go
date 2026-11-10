@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/rushikesh/devhub/internal/registry"
 )
 
 func (q *Queue) Prune(ctx context.Context) error {
@@ -37,6 +39,10 @@ func (q *Queue) Prune(ctx context.Context) error {
 }
 
 func (q *Queue) Build(ctx context.Context, prDir, dockerfile, image string) (string, error) {
+	if err := q.requireEngine(); err != nil {
+		q.failEvent(registry.E2ERun{Project: filepath.Base(prDir)}, err)
+		return "", err
+	}
 	df := dockerfile
 	if df == "" {
 		df = "e2e/Dockerfile"

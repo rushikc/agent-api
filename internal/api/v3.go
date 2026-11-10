@@ -240,13 +240,19 @@ func (s *Server) secretsList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, []any{})
 		return
 	}
-	refs, err := s.Secrets.ListKeychain()
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
+	var names []string
+	if s.Core != nil && s.Core.DB != nil {
+		names, _ = s.Core.DB.ListSecretNames()
+	}
+	if len(names) == 0 {
+		refs, _ := s.Secrets.ListKeychain()
+		for _, ref := range refs {
+			names = append(names, ref.Name)
+		}
 	}
 	var out []map[string]any
-	for _, ref := range refs {
+	for _, n := range names {
+		ref := secrets.Ref{Name: n, Source: "keychain", Raw: "keychain://" + n}
 		item := map[string]any{"name": ref.Name, "source": ref.Source, "ref": ref.Raw, "ok": false}
 		if _, _, err := s.Secrets.Resolve(r.Context(), ref.Raw); err == nil {
 			item["ok"] = true
@@ -270,6 +276,9 @@ func (s *Server) secretsSet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
+	if s.Core != nil && s.Core.DB != nil && body.Name != "" {
+		_ = s.Core.DB.PutSecretName(body.Name)
+	}
 	w.WriteHeader(204)
 }
 
@@ -281,6 +290,9 @@ func (s *Server) secretsRm(w http.ResponseWriter, r *http.Request) {
 	if err := s.Secrets.Remove(r.PathValue("name")); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
+	}
+	if s.Core != nil && s.Core.DB != nil {
+		_ = s.Core.DB.DeleteSecretName(r.PathValue("name"))
 	}
 	w.WriteHeader(204)
 }

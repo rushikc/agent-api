@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/rushikesh/devhub/internal/client"
 	"github.com/rushikesh/devhub/internal/config"
@@ -489,18 +489,11 @@ func newUpCmd() *cobra.Command {
 			if len(args) > 0 {
 				name = args[0]
 			}
-			if c := tryDaemon(svc.Cfg); c != nil && name != "" && yes {
-				b, err := c.ProfileUp(name)
-				if err != nil {
-					return err
-				}
-				fmt.Println(string(b))
-				return nil
-			}
 			pr, err := profile.Find(svc.Cfg, name)
 			if err != nil {
 				return err
 			}
+			name = pr.Name
 			if !yes {
 				rows, _ := svc.DB.List(false)
 				for _, sh := range pr.Shadows {
@@ -523,20 +516,16 @@ func newUpCmd() *cobra.Command {
 					}
 				}
 			}
-			res, err := profile.Up(svc, pr, yes)
+			c := tryDaemon(svc.Cfg)
+			if c == nil {
+				return fmt.Errorf("daemon is not running")
+			}
+			b, err := c.ProfileUp(name)
 			if err != nil {
 				return err
 			}
-			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tKIND\tPORT\tURL\tSTATUS")
-			for _, r := range res {
-				port := ""
-				if r.Port > 0 {
-					port = strconv.Itoa(r.Port)
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Name, r.Kind, port, r.URL, r.Status)
-			}
-			return w.Flush()
+			fmt.Println(string(b))
+			return nil
 		}),
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "free conflicting ports without asking")
@@ -580,9 +569,13 @@ func newInitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			pr, err := profile.Init(wd)
+			cfg, _ := config.Load()
+			pr, err := profile.Init(wd, cfg)
 			if err != nil {
 				return err
+			}
+			if base := filepath.Base(wd); pr.Name != base {
+				fmt.Fprintf(os.Stderr, "warning: profile name %s differs from directory %s\n", pr.Name, base)
 			}
 			fmt.Println("wrote", wd+"/devhub.yaml for", pr.Name)
 			for _, sh := range pr.Shadows {
@@ -685,7 +678,7 @@ func newFreeCmd() *cobra.Command {
 }
 
 func newOrphansCmd() *cobra.Command {
-	var kill bool
+	var kill, asJSON bool
 	cmd := &cobra.Command{
 		Use:   "orphans",
 		Short: "List orphan processes",
@@ -695,18 +688,21 @@ func newOrphansCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "PID\tNAME\tPROJECT\tCWD")
+			if asJSON {
+				return printJSON(orph)
+			}
+			var out [][]string
 			for _, o := range orph {
-				fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", o.PID, o.Name, o.Project, o.Cwd)
+				out = append(out, []string{strconv.Itoa(int(o.PID)), o.Name, o.Project, o.Cwd})
 				if kill {
 					_ = janitor.KillTree(o.PID)
 				}
 			}
-			return w.Flush()
+			return printTable(os.Stdout, []string{"PID", "NAME", "PROJECT", "CWD"}, out)
 		}),
 	}
 	cmd.Flags().BoolVar(&kill, "kill", false, "SIGTERM matching orphans")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "raw JSON")
 	return cmd
 }
 

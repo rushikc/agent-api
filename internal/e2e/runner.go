@@ -59,11 +59,35 @@ func NewQueue(cfg *config.Config, db *registry.DB, eng Engine, bus *events.Bus, 
 	return &Queue{Cfg: cfg, DB: db, Eng: eng, Bus: bus, Secrets: sec, Conc: n, cancels: map[string]context.CancelFunc{}, logs: map[string]*bytes.Buffer{}}
 }
 
+func (q *Queue) requireEngine() error {
+	if q == nil || q.Eng == nil {
+		return ErrEngineDown
+	}
+	if err := q.Eng.Ping(); err != nil {
+		return ErrEngineDown
+	}
+	return nil
+}
+
+func (q *Queue) failEvent(run registry.E2ERun, err error) {
+	if q.Bus == nil {
+		return
+	}
+	q.Bus.Publish(events.Event{Type: events.E2EFailed, Target: run.ID, Project: run.Project, Payload: map[string]any{"status": "failed", "error": err.Error()}})
+}
+
 func (q *Queue) Enqueue(req RunRequest, pr *profile.Profile) (registry.E2ERun, error) {
 	id := fmt.Sprintf("%d", time.Now().UnixNano())
 	run := registry.E2ERun{
 		ID: id, Project: req.Project, Status: "queued",
 		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	if err := q.requireEngine(); err != nil {
+		run.Status = "failed"
+		run.Summary = err.Error()
+		_ = q.DB.InsertE2ERun(run)
+		q.failEvent(run, err)
+		return run, err
 	}
 	if err := q.DB.InsertE2ERun(run); err != nil {
 		return run, err

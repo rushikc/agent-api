@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -298,9 +299,7 @@ func newSecretsCmd() *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use: "set <name>", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Fprint(os.Stderr, "value: ")
-			b, err := term.ReadPassword(int(syscall.Stdin))
-			fmt.Fprintln(os.Stderr)
+			b, err := readSecretValue(os.Stdin, term.IsTerminal(int(syscall.Stdin)))
 			if err != nil {
 				return err
 			}
@@ -372,7 +371,8 @@ func newSecretsCmd() *cobra.Command {
 
 func newAlertsCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "alerts", Short: "Notifications"}
-	cmd.AddCommand(&cobra.Command{
+	var asJSON bool
+	ls := &cobra.Command{
 		Use: "ls",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := mustDaemon()
@@ -383,10 +383,23 @@ func newAlertsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(string(b))
-			return nil
+			if asJSON {
+				fmt.Println(string(b))
+				return nil
+			}
+			var rows []map[string]any
+			_ = json.Unmarshal(b, &rows)
+			var table [][]string
+			for _, r := range rows {
+				table = append(table, []string{
+					fmt.Sprint(r["ts"]), fmt.Sprint(r["type"]), fmt.Sprint(r["target"]), fmt.Sprint(r["project"]),
+				})
+			}
+			return printTable(os.Stdout, []string{"TIME", "TYPE", "TARGET", "PROJECT"}, table)
 		},
-	})
+	}
+	ls.Flags().BoolVar(&asJSON, "json", false, "raw JSON")
+	cmd.AddCommand(ls)
 	cmd.AddCommand(&cobra.Command{
 		Use: "test",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -422,6 +435,20 @@ func newE2EUICmd() *cobra.Command {
 		withCaller("tui")
 		return ui.RunE2E()
 	}}
+}
+
+func readSecretValue(in io.Reader, isTTY bool) ([]byte, error) {
+	if isTTY {
+		fmt.Fprint(os.Stderr, "value: ")
+		b, err := term.ReadPassword(int(syscall.Stdin))
+		fmt.Fprintln(os.Stderr)
+		return b, err
+	}
+	b, err := io.ReadAll(in)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(strings.TrimSpace(string(b))), nil
 }
 
 func newAlertsUICmd() *cobra.Command {

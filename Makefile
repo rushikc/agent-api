@@ -2,9 +2,12 @@ PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
 FORCE ?=
 
-.PHONY: build install test lint
+.PHONY: build install test lint dev fixed frontend backend e2e typecheck
 
-# Pure Go (modernc sqlite). Avoids Darwin CGO link issues with gopsutil extras.
+# Args for bin/devhub in `make dev` / `make fixed` (see COMMANDS.md).
+DEVHUB_ARGS ?= daemon
+
+# Belt-and-suspenders: process APIs are ps/lsof (no CGO). Keep CGO off in make.
 export CGO_ENABLED := 0
 
 build:
@@ -49,3 +52,21 @@ test:
 
 lint:
 	go vet ./...
+
+typecheck:
+	go build ./...
+
+# Common commands (COMMANDS.md). dev/backend rebuild and restart on change; fixed builds once.
+dev:
+	@./scripts/dev.sh $(DEVHUB_ARGS)
+
+backend: dev
+
+fixed: build
+	./bin/devhub $(DEVHUB_ARGS)
+
+frontend:
+	@echo "agent-api has no frontend (Go CLI + daemon); not applicable."
+
+e2e:
+	@echo "agent-api has no e2e suite; nothing to run."

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/rushikesh/devhub/internal/config"
+	"github.com/rushikesh/devhub/internal/monitor"
 )
 
 type recKiller struct {
@@ -78,5 +79,21 @@ func TestProjectForCwdSymlinkPair(t *testing.T) {
 	}
 	if got := projectForCwd(cfg, real+"/sub"); got != "x" {
 		t.Fatalf("sub %q", got)
+	}
+}
+
+func TestListOrphansTmuxReparent(t *testing.T) {
+	cfg := config.Default()
+	cfg.Projects = map[string]string{"x": "/tmp/x"}
+	cfg.Janitor.ProcessNames = []string{"node"}
+	procs := []monitor.Proc{{
+		PID: 99, PPID: 42, Name: "node", Cwd: "/private/tmp/x",
+	}}
+	orph, err := ListOrphansAt(cfg, nil, treeSrc{ch: map[int32][]int32{}}, 42, procs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orph) != 1 || orph[0].PID != 99 || orph[0].Project != "x" {
+		t.Fatalf("%+v", orph)
 	}
 }

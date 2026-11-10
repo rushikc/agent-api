@@ -59,15 +59,39 @@ func NewDocker() (Engine, error) {
 		hc = &http.Client{Timeout: 0}
 	}
 	eng := &dockerEng{hc: hc, base: base}
-	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
-	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/_ping", nil)
-	resp, err := hc.Do(req)
-	if err != nil {
+	if err := eng.Ping(); err != nil {
 		return nil, err
 	}
-	_ = resp.Body.Close()
 	return eng, nil
+}
+
+func Ping() error {
+	eng, err := NewDocker()
+	if err != nil {
+		return ErrEngineDown
+	}
+	return eng.Ping()
+}
+
+func (d *dockerEng) Ping() error {
+	if d == nil || d.hc == nil {
+		return ErrEngineDown
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.base+"/_ping", nil)
+	if err != nil {
+		return ErrEngineDown
+	}
+	resp, err := d.hc.Do(req)
+	if err != nil {
+		return ErrEngineDown
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return ErrEngineDown
+	}
+	return nil
 }
 
 func (d *dockerEng) RuntimeName() string { return DetectRuntime() }

@@ -48,9 +48,6 @@ func Run(cfg *config.Config, svc *core.Service) error {
 	gw := gcp.NewGateway(cfg, svc.DB, bus)
 	sec := secrets.New(gw)
 	eng, _ := e2e.NewDocker()
-	if eng == nil {
-		eng = e2e.NewFake()
-	}
 	eq := e2e.NewQueue(cfg, svc.DB, eng, bus, sec)
 	al := alerts.New(cfg.Alerts, svc.DB)
 	al.Subscribe(bus)

@@ -70,6 +70,7 @@ type E2ERun struct {
 	ExitCode     *int      `json:"exit_code,omitempty"`
 	ArtifactPath string    `json:"artifact_path"`
 	Summary      string    `json:"summary"`
+	SummaryText  string    `json:"summary_text,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

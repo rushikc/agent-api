@@ -8,6 +8,8 @@ import (
 
 	"github.com/rushikesh/devhub/internal/client"
 	"github.com/rushikesh/devhub/internal/config"
+	"github.com/rushikesh/devhub/internal/core"
+	"github.com/rushikesh/devhub/internal/jsonx"
 	"github.com/rushikesh/devhub/internal/registry"
 )
 
@@ -57,15 +59,26 @@ func (t *Tools) ListSessions(project, kind string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	b, _ := json.MarshalIndent(ss, "", "  ")
+	b, err := jsonx.Compact(ss)
+	if err != nil {
+		return "", err
+	}
 	return string(b), nil
 }
 
-func (t *Tools) StartShadow(project, command string) (string, error) {
+func (t *Tools) StartShadow(project, command string, argv []string, name string) (string, error) {
 	if !t.allowMut() {
 		return "", fmt.Errorf("mcp.allow_mutations is false")
 	}
-	s, err := t.C.Create(map[string]any{"project": project, "kind": "shadow", "command": command})
+	resolved := core.ResolveArgv(argv, command)
+	if len(resolved) == 0 {
+		return "", fmt.Errorf("argv or command is required")
+	}
+	body := map[string]any{"project": project, "kind": "shadow", "command": command, "argv": resolved}
+	if name != "" {
+		body["name"] = name
+	}
+	s, err := t.C.Create(body)
 	if err != nil {
 		return "", err
 	}
@@ -195,14 +208,44 @@ func (t *Tools) E2EFailures(id string) (string, error) {
 	}
 	var run struct {
 		Summary      string `json:"summary"`
+		SummaryText  string `json:"summary_text"`
 		ArtifactPath string `json:"artifact_path"`
 		Status       string `json:"status"`
 	}
 	_ = json.Unmarshal(b, &run)
-	if run.Summary == "" {
+	var lines []string
+	if run.SummaryText != "" {
+		lines = append(lines, run.SummaryText)
+	}
+	var sum struct {
+		Failures []struct {
+			Name      string `json:"name"`
+			Classname string `json:"classname"`
+			Message   string `json:"message"`
+		} `json:"failures"`
+	}
+	if run.Summary != "" && json.Unmarshal([]byte(run.Summary), &sum) == nil {
+		for _, f := range sum.Failures {
+			n := f.Name
+			if f.Classname != "" && n != "" {
+				n = f.Classname + "/" + n
+			} else if n == "" {
+				n = f.Classname
+			}
+			if f.Message != "" {
+				lines = append(lines, n+": "+f.Message)
+			} else {
+				lines = append(lines, n)
+			}
+		}
+	}
+	if run.ArtifactPath != "" {
+		lines = append(lines, "artifacts: "+run.ArtifactPath)
+	}
+	if len(lines) == 0 {
 		return string(b), nil
 	}
-	return run.Summary + "\nartifacts: " + run.ArtifactPath, nil
+	return strings.Join(lines, "\n"), nil
 }
 
 func (t *Tools) E2ELogs(id string) (string, error) {

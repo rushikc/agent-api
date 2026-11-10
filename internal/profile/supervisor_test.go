@@ -1,10 +1,12 @@
 package profile
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/rushikesh/devhub/internal/events"
 	"github.com/rushikesh/devhub/internal/registry"
+	"github.com/rushikesh/devhub/internal/tmux"
 )
 
 func TestTickManualShadowCrash(t *testing.T) {
@@ -88,5 +90,35 @@ func TestTickDoesNotRestartManualWithoutPolicy(t *testing.T) {
 	got, _ := svc.DB.Get(sess.ID)
 	if got.RestartCount != 0 {
 		t.Fatalf("restarted %+v", got)
+	}
+}
+
+func TestCrashLogsStripPaneDead(t *testing.T) {
+	svc := testProfileService(t)
+	var payload map[string]any
+	svc.Publish = func(kind, target, project string, p map[string]any) {
+		if kind == events.ShadowCrashed {
+			payload = p
+		}
+	}
+	sess, err := svc.NewShadow("krayon", "job", []string{"sh", "-c", "echo crash-soon; exit 2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := svc.Tmux.(*tmux.Fake)
+	fake.SetPaneOutput(sess.TmuxTarget, "crash-soon\n\nPane is dead (exited 2)\n\n")
+	code := 2
+	sess.Status = registry.StatusExited
+	sess.ExitCode = &code
+	if err := svc.DB.Update(sess); err != nil {
+		t.Fatal(err)
+	}
+	Tick(svc, nil, map[int64]string{})
+	logs, _ := payload["logs"].(string)
+	if !strings.Contains(logs, "crash-soon") {
+		t.Fatalf("logs %q", logs)
+	}
+	if strings.Contains(logs, "Pane is dead") {
+		t.Fatalf("logs %q", logs)
 	}
 }

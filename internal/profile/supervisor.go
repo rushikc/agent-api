@@ -44,7 +44,18 @@ func lastLogLines(svc *core.Service, sess registry.Session, n int) string {
 	if err != nil {
 		return ""
 	}
-	lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
+	raw := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
+	var lines []string
+	for _, line := range raw {
+		t := strings.TrimSpace(line)
+		if t == "" {
+			continue
+		}
+		if strings.HasPrefix(t, "Pane is dead") {
+			continue
+		}
+		lines = append(lines, line)
+	}
 	if len(lines) > n {
 		lines = lines[len(lines)-n:]
 	}

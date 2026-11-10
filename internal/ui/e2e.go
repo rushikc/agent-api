@@ -118,7 +118,11 @@ func (m e2eModel) View() string {
 	}
 	s := renderHeader("E2E", "enter logs · r rerun · o report", m.width) + "\n"
 	for i, r := range m.runs {
-		line := fmt.Sprintf("%s  %s  %s  %s", r.ID, r.Project, r.Status, r.GitSHA)
+		sum := r.SummaryText
+		if sum == "" {
+			sum = r.Summary
+		}
+		line := fmt.Sprintf("%s  %s  %s  %s  %s", r.ID, r.Project, r.Status, r.GitSHA, sum)
 		if i == m.cur {
 			line = selStyle.Render("> " + line)
 		} else {

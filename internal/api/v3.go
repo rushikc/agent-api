@@ -142,7 +142,7 @@ func (s *Server) e2eList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	writeJSON(w, rows)
+	writeJSON(w, e2e.DecorateRuns(rows))
 }
 
 func (s *Server) e2eGet(w http.ResponseWriter, r *http.Request) {
@@ -151,7 +151,7 @@ func (s *Server) e2eGet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 404)
 		return
 	}
-	writeJSON(w, run)
+	writeJSON(w, e2e.DecorateRun(run))
 }
 
 func (s *Server) e2eLogs(w http.ResponseWriter, r *http.Request) {

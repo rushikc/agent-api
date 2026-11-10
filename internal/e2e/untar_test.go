@@ -35,6 +35,28 @@ func TestExtractTarNestedJUnit(t *testing.T) {
 	}
 }
 
+func TestExtractTarStripsTopLevelDir(t *testing.T) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	body := `<?xml version="1.0"?><testsuite><testcase name="ok"/></testsuite>`
+	_ = tw.WriteHeader(&tar.Header{Name: "junit.xml/", Mode: 0755, Typeflag: tar.TypeDir})
+	_ = tw.WriteHeader(&tar.Header{Name: "junit.xml/junit.xml", Size: int64(len(body)), Mode: 0644})
+	_, _ = tw.Write([]byte(body))
+	_ = tw.Close()
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "junit.xml")
+	if err := ExtractTar(&buf, dest); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != body {
+		t.Fatalf("%s", got)
+	}
+}
+
 func TestExtractTarRejectsEscape(t *testing.T) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)

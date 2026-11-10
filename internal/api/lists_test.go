@@ -56,3 +56,56 @@ func TestListEndpointsEmptyArray(t *testing.T) {
 		t.Fatal(string(b))
 	}
 }
+
+func TestListSessionsAndE2EWithExitCode(t *testing.T) {
+	dir := t.TempDir()
+	db, err := registry.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	cfg := config.Default().WithDir(dir)
+	svc := &core.Service{Cfg: cfg, Tmux: tmux.NewFake(), DB: db, Sampler: monitor.NewSampler(nil)}
+	srv := New(cfg, svc, nil)
+	code := 2
+	if _, err := db.Insert(registry.Session{
+		Project: "demo", Name: "job", Kind: registry.KindShadow, Status: registry.StatusExited, ExitCode: &code, Command: "false",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.InsertE2ERun(registry.E2ERun{
+		ID: "run1", Project: "demo", Status: "failed", ExitCode: &code,
+		Summary: `{"passed":2,"failed":1,"failures":[{"name":"bad","classname":"a","message":"boom"}]}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"/v1/sessions", "/v1/e2e/runs"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, p, nil)
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != 200 {
+			t.Fatalf("%s %d %s", p, rec.Code, rec.Body.String())
+		}
+		var got any
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("%s json %v %s", p, err, rec.Body.String())
+		}
+		arr, ok := got.([]any)
+		if !ok || len(arr) == 0 {
+			t.Fatalf("%s %T %s", p, got, rec.Body.String())
+		}
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/e2e/runs/run1", nil)
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatal(rec.Body.String())
+	}
+	var run map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+		t.Fatal(err, rec.Body.String())
+	}
+	if run["summary_text"] != "2 passed, 1 failed" {
+		t.Fatalf("%v", run["summary_text"])
+	}
+}

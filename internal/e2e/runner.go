@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/rushikesh/devhub/internal/config"
+	"github.com/rushikesh/devhub/internal/core"
 	"github.com/rushikesh/devhub/internal/events"
 	"github.com/rushikesh/devhub/internal/profile"
 	"github.com/rushikesh/devhub/internal/registry"
@@ -329,7 +330,7 @@ func (q *Queue) runJob(ctx context.Context, j *job, run *registry.E2ERun) (err e
 		binds = append(binds, cacheVolName(pr.Name, vol)+":"+dest)
 	}
 
-	cmd := strings.Fields(cfg.Command)
+	cmd := core.ResolveArgv(nil, cfg.Command)
 	if len(cmd) == 0 {
 		cmd = []string{"npx", "playwright", "test"}
 	}
@@ -357,12 +358,18 @@ func (q *Queue) runJob(ctx context.Context, j *job, run *registry.E2ERun) (err e
 		return err
 	}
 
+	var logWG sync.WaitGroup
 	if rc, e := q.Eng.Logs(ctx, jobID); e == nil {
 		defer rc.Close()
-		go func() { _, _ = io.Copy(newPrefixWriter(logWriter{q, run.ID}, "[test] "), rc) }()
+		logWG.Add(1)
+		go func() {
+			defer logWG.Done()
+			_, _ = io.Copy(newPrefixWriter(logWriter{q, run.ID}, "[test] "), rc)
+		}()
 	}
 	code, err := q.Eng.WaitContainer(ctx, jobID)
 	run.ExitCode = &code
+	logWG.Wait()
 	if err != nil {
 		return err
 	}
@@ -370,15 +377,6 @@ func (q *Queue) runJob(ctx context.Context, j *job, run *registry.E2ERun) (err e
 	artDir := filepath.Join(q.Cfg.E2EDir(), pr.Name, run.ID)
 	_ = os.MkdirAll(artDir, 0o755)
 	run.ArtifactPath = artDir
-	q.mu.Lock()
-	if b := q.logs[run.ID]; b != nil {
-		body := b.String()
-		if q.Scrub != nil {
-			body = q.Scrub(body)
-		}
-		_ = os.WriteFile(filepath.Join(artDir, "run.log"), []byte(body), 0o644)
-	}
-	q.mu.Unlock()
 	q.appendLog(run.ID, "[teardown] copying artifacts\n")
 	for _, a := range cfg.Artifacts {
 		src := a
@@ -393,10 +391,13 @@ func (q *Queue) runJob(ctx context.Context, j *job, run *registry.E2ERun) (err e
 		_ = ExtractTar(rc, destDir)
 		_ = rc.Close()
 	}
+	summaryText := ""
 	if sum, ok := SummarizeJUnitDir(artDir); ok {
 		raw, _ := json.Marshal(sum)
 		run.Summary = string(raw)
-		if sum.Failed > 0 {
+		summaryText = FormatSummary(sum)
+		run.SummaryText = summaryText
+		if sum.Failed > 0 || sum.Errors > 0 {
 			run.Status = "failed"
 		} else {
 			run.Status = "passed"
@@ -406,7 +407,21 @@ func (q *Queue) runJob(ctx context.Context, j *job, run *registry.E2ERun) (err e
 	} else {
 		run.Status = "passed"
 	}
+	q.appendLog(run.ID, fmt.Sprintf("[result] status=%s exit=%d summary=%s\n", run.Status, code, summaryText))
+	q.flushRunLog(run.ID, artDir)
 	return nil
+}
+
+func (q *Queue) flushRunLog(id, artDir string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if b := q.logs[id]; b != nil {
+		body := b.String()
+		if q.Scrub != nil {
+			body = q.Scrub(body)
+		}
+		_ = os.WriteFile(filepath.Join(artDir, "run.log"), []byte(body), 0o644)
+	}
 }
 
 type logWriter struct {

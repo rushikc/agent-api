@@ -59,13 +59,12 @@ func TestStartShadowRequiredFields(t *testing.T) {
 			required = append(required, name)
 		}
 	}
-	if strings.Join(required, ",") != "project,command" {
+	if strings.Join(required, ",") != "project" {
 		t.Fatalf("required %v", required)
 	}
-	for _, n := range optional {
-		if n == "project" || n == "command" {
-			t.Fatal("project/command must not be omitempty")
-		}
+	opt := strings.Join(optional, ",")
+	if !strings.Contains(opt, "command") || !strings.Contains(opt, "argv") {
+		t.Fatalf("optional %v", optional)
 	}
 }
 

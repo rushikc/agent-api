@@ -3,6 +3,7 @@ package profile
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/rushikesh/devhub/internal/config"
@@ -145,6 +146,32 @@ func TestDownAllStopsActives(t *testing.T) {
 	v1, _ := svc.DB.GetByProjectName("krayon", "v1")
 	if v1.Status != registry.StatusStopped {
 		t.Fatalf("%+v", v1)
+	}
+}
+
+func TestProfileCommandShellArgv(t *testing.T) {
+	svc := testProfileService(t)
+	dir := svc.Cfg.Projects["krayon"]
+	cmd := "echo a; echo b"
+	yaml := "name: krayon\nshadows:\n  - name: q\n    command: " + strconv.Quote(cmd) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "devhub.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pr, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr.Path = dir
+	if _, err := Up(svc, pr, false); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := svc.DB.GetByProjectName("krayon", "q")
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := core.ParseArgv(sess)
+	if len(argv) != 3 || argv[2] != cmd {
+		t.Fatalf("%v", argv)
 	}
 }
 

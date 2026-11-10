@@ -10,20 +10,21 @@ import (
 )
 
 type FakeEngine struct {
-	Mu          sync.Mutex
-	Images      map[string]bool
-	Networks    map[string]bool
-	Volumes     map[string]bool
-	Containers  map[string]ContainerSpec
-	Started     []string
-	Removed     []string
-	NetsRemoved []string
-	FailCreate  bool
-	FailStart   bool
-	ExitCode    int
-	LogBody     string
-	CopyFromErr bool
-	WaitFn      func(ctx context.Context, id string) (int, error)
+	Mu           sync.Mutex
+	Images       map[string]bool
+	Networks     map[string]bool
+	Volumes      map[string]bool
+	Containers   map[string]ContainerSpec
+	Started      []string
+	Removed      []string
+	NetsRemoved  []string
+	FailCreate   bool
+	FailStart    bool
+	ExitCode     int
+	LogBody      string
+	CopyFromErr  bool
+	CopyFromData map[string][]byte
+	WaitFn       func(ctx context.Context, id string) (int, error)
 }
 
 func NewFake() *FakeEngine {
@@ -122,6 +123,11 @@ func (f *FakeEngine) CopyTo(_ context.Context, id, dest string, tar io.Reader) e
 func (f *FakeEngine) CopyFrom(_ context.Context, id, src string) (io.ReadCloser, error) {
 	if f.CopyFromErr {
 		return nil, fmt.Errorf("no artifact")
+	}
+	if f.CopyFromData != nil {
+		if b, ok := f.CopyFromData[src]; ok {
+			return io.NopCloser(bytes.NewReader(b)), nil
+		}
 	}
 	return io.NopCloser(bytes.NewReader(nil)), nil
 }

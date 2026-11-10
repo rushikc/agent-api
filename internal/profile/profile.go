@@ -70,6 +70,7 @@ type Window struct {
 type Shadow struct {
 	Name      string   `yaml:"name" json:"name"`
 	Command   string   `yaml:"command" json:"command"`
+	Argv      []string `yaml:"argv" json:"argv,omitempty"`
 	Cwd       string   `yaml:"cwd" json:"cwd"`
 	Port      int      `yaml:"port" json:"port"`
 	Ready     Ready    `yaml:"ready" json:"ready"`
@@ -250,7 +251,7 @@ func Up(svc *core.Service, pr *Profile, autoFree bool) ([]UpResult, error) {
 				}
 			}
 		}
-		cmd := strings.Fields(sh.Command)
+		cmd := core.ResolveArgv(sh.Argv, sh.Command)
 		sess, err := svc.NewShadowIn(pr.Name, sh.Name, cwd, cmd, env, sh.Port, sh.Restart)
 		if err != nil {
 			results = append(results, UpResult{Name: sh.Name, Kind: "shadow", Port: sh.Port, Status: err.Error()})

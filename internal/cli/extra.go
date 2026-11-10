@@ -16,6 +16,7 @@ import (
 	"github.com/rushikesh/devhub/internal/core"
 	"github.com/rushikesh/devhub/internal/daemon"
 	"github.com/rushikesh/devhub/internal/e2e"
+	"github.com/rushikesh/devhub/internal/monitor"
 	"github.com/rushikesh/devhub/internal/shell"
 	"github.com/rushikesh/devhub/internal/tmux"
 	"github.com/spf13/cobra"
@@ -166,6 +167,15 @@ func printDoctorChecks(cfg *config.Config) {
 		if strings.Contains(line, "devhub monitor") && !strings.Contains(line, "devhub daemon") {
 			fmt.Println("stale process:", strings.TrimSpace(line), "(stop with: kill <pid>; daemon is the status.json writer)")
 		}
+	}
+	procs, err := monitor.ReadPSErr()
+	if err != nil {
+		fmt.Println("process table:", err)
+	} else {
+		fmt.Printf("process table: %d rows\n", len(procs))
+	}
+	if stderr := monitor.LastPSStderr(); stderr != "" {
+		fmt.Println("ps stderr:", stderr)
 	}
 }
 

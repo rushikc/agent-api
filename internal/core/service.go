@@ -536,7 +536,7 @@ func (s *Service) Peek(ref string) (string, error) {
 	if sess.TmuxTarget == "" {
 		return "", fmt.Errorf("%s has no tmux pane", ref)
 	}
-	return s.Tmux.CapturePane(sess.TmuxTarget, -200)
+	return s.Tmux.CapturePane(sess.TmuxTarget, -1000)
 }
 
 func (s *Service) Attach(ref string) error {

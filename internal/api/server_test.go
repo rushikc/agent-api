@@ -96,3 +96,32 @@ func TestReloadUpdatesProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCreateShadowCommandQuoting(t *testing.T) {
+	dir := t.TempDir()
+	db, err := registry.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	cfg := config.Default()
+	cfg.Projects = map[string]string{"krayon": t.TempDir()}
+	svc := &core.Service{Cfg: cfg, Tmux: tmux.NewFake(), DB: db, Sampler: monitor.NewSampler(nil)}
+	srv := New(cfg, svc, nil)
+	cmd := "echo a; echo b"
+	body, _ := json.Marshal(map[string]any{"project": "krayon", "kind": "shadow", "command": cmd})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(body))
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatal(rec.Body.String())
+	}
+	rows, err := db.List(true)
+	if err != nil || len(rows) == 0 {
+		t.Fatal(err, rows)
+	}
+	argv := core.ParseArgv(rows[0])
+	if len(argv) != 3 || argv[2] != cmd {
+		t.Fatalf("%v", argv)
+	}
+}

@@ -311,7 +311,10 @@ func (c *CLI) ListSessions() ([]Session, error) {
 }
 
 func (c *CLI) CapturePane(target string, start int) (string, error) {
-	out, err := c.output("capture-pane", "-p", "-t", target, "-S", strconv.Itoa(start))
+	if start == 0 {
+		start = -1000
+	}
+	out, err := c.output("capture-pane", "-p", "-J", "-t", target, "-S", strconv.Itoa(start))
 	if err != nil {
 		return "", err
 	}

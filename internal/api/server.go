@@ -82,6 +82,13 @@ func (s *Server) Handler() http.Handler { return s.mux }
 
 func (s *Server) wrap(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("%v", rec)})
+			}
+		}()
 		if s.RequireToken {
 			got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 			if s.Token == "" || got != s.Token {
@@ -184,10 +191,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	var sess registry.Session
 	var err error
 	if body.Kind == "shadow" {
-		argv := body.Argv
-		if len(argv) == 0 {
-			argv = strings.Fields(body.Command)
-		}
+		argv := core.ResolveArgv(body.Argv, body.Command)
 		sess, err = s.Core.NewShadowIn(body.Project, body.Name, body.Cwd, argv, nil, 0, body.Restart)
 	} else {
 		sess, err = s.Core.NewActiveIn(body.Project, body.Name, body.Cwd, nil)

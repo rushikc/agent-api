@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +33,25 @@ type DefaultSource struct {
 
 type GopsutilSource = DefaultSource
 
+var (
+	psMu     sync.Mutex
+	psStderr string
+)
+
+func LastPSStderr() string {
+	psMu.Lock()
+	defer psMu.Unlock()
+	return psStderr
+}
+
+func psArgs() []string {
+	elapsed := "etimes="
+	if runtime.GOOS == "darwin" {
+		elapsed = "etime="
+	}
+	return []string{"-axo", "pid=,ppid=,uid=,rss=,pcpu=," + elapsed + ",comm="}
+}
+
 func (s *DefaultSource) refresh() []Proc {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -44,19 +64,96 @@ func (s *DefaultSource) refresh() []Proc {
 }
 
 func ReadPS() []Proc {
-	cmd := exec.Command("ps", "-axo", "pid=,ppid=,uid=,rss=,pcpu=,etimes=,comm=")
-	b, err := cmd.Output()
-	if err != nil {
+	procs, _ := ReadPSErr()
+	return procs
+}
+
+func ReadPSErr() ([]Proc, error) {
+	cmd := exec.Command("ps", psArgs()...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	psMu.Lock()
+	psStderr = strings.TrimSpace(stderr.String())
+	psMu.Unlock()
+	procs := ParsePS(stdout.Bytes())
+	if len(procs) == 0 && err != nil {
+		msg := psStderr
+		if msg == "" {
+			msg = err.Error()
+		}
+		return nil, fmt.Errorf("ps: %s", msg)
+	}
+	return procs, nil
+}
+
+func splitPS(line string, n int) []string {
+	s := strings.TrimSpace(line)
+	if s == "" {
 		return nil
 	}
-	return ParsePS(b)
+	out := make([]string, 0, n)
+	for i := 0; i < n-1; i++ {
+		s = strings.TrimLeft(s, " \t")
+		if s == "" {
+			return out
+		}
+		sp := strings.IndexAny(s, " \t")
+		if sp < 0 {
+			out = append(out, s)
+			return out
+		}
+		out = append(out, s[:sp])
+		s = s[sp:]
+	}
+	s = strings.TrimLeft(s, " \t")
+	if s != "" {
+		out = append(out, s)
+	}
+	return out
+}
+
+func ParseElapsed(s string) int64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return n
+	}
+	var days int64
+	rest := s
+	if i := strings.IndexByte(s, '-'); i >= 0 {
+		d, err := strconv.ParseInt(s[:i], 10, 64)
+		if err != nil {
+			return 0
+		}
+		days = d
+		rest = s[i+1:]
+	}
+	parts := strings.Split(rest, ":")
+	var h, m, sec int64
+	switch len(parts) {
+	case 2:
+		m, _ = strconv.ParseInt(parts[0], 10, 64)
+		sec, _ = strconv.ParseInt(parts[1], 10, 64)
+	case 3:
+		h, _ = strconv.ParseInt(parts[0], 10, 64)
+		m, _ = strconv.ParseInt(parts[1], 10, 64)
+		sec, _ = strconv.ParseInt(parts[2], 10, 64)
+	default:
+		return 0
+	}
+	return days*86400 + h*3600 + m*60 + sec
 }
 
 func ParsePS(b []byte) []Proc {
 	var out []Proc
+	now := time.Now().Unix()
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	for sc.Scan() {
-		fields := strings.Fields(sc.Text())
+		fields := splitPS(sc.Text(), 7)
 		if len(fields) < 6 {
 			continue
 		}
@@ -68,10 +165,10 @@ func ParsePS(b []byte) []Proc {
 		name := fields[5]
 		var start int64
 		if len(fields) >= 7 {
-			etimes, _ := strconv.ParseInt(fields[5], 10, 64)
+			etimes := ParseElapsed(fields[5])
 			name = fields[6]
-			if etimes >= 0 {
-				start = time.Now().Unix() - etimes
+			if etimes > 0 {
+				start = now - etimes
 			}
 		}
 		if pid <= 0 {

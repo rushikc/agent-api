@@ -270,7 +270,7 @@ func (m shadowsModel) updateCommand(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.Blur()
 		return m, nil
 	case "enter":
-		cmd := strings.Fields(m.input.Value())
+		cmd := core.ResolveArgv(nil, m.input.Value())
 		proj := m.projects[m.pCursor]
 		if _, err := m.svc.NewShadow(proj, "", cmd); err != nil {
 			m.err = err.Error()

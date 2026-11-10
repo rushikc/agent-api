@@ -1,9 +1,13 @@
 package e2e
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,7 +33,7 @@ func TestJUnitParse(t *testing.T) {
 	if s.Passed != 1 || s.Failed != 1 || s.Skipped != 1 || len(s.Failures) != 1 {
 		t.Fatalf("%+v", s)
 	}
-	if s.Failures[0].Name != "a/bad" {
+	if s.Failures[0].Name != "bad" || s.Failures[0].Classname != "a" {
 		t.Fatal(s.Failures[0])
 	}
 }
@@ -162,4 +166,123 @@ func TestSummaryJSON(t *testing.T) {
 	if string(b) == "" {
 		t.Fatal("empty")
 	}
+	if FormatSummary(s) != "1 passed, 2 failed" {
+		t.Fatal(FormatSummary(s))
+	}
+}
+
+func TestNestedTestsuites(t *testing.T) {
+	xml := `<?xml version="1.0"?>
+<testsuites>
+  <testsuite name="outer">
+    <testsuite name="inner">
+      <testcase classname="a" name="ok"/>
+      <testcase classname="a" name="bad"><failure message="boom"/></testcase>
+    </testsuite>
+  </testsuite>
+</testsuites>`
+	s, err := ParseJUnitBytes([]byte(xml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Passed != 1 || s.Failed != 1 {
+		t.Fatalf("%+v", s)
+	}
+}
+
+func TestSummarizeJUnitDirDedup(t *testing.T) {
+	dir := t.TempDir()
+	xml := `<?xml version="1.0"?><testsuite><testcase name="ok"/><testcase name="ok2"/><testcase name="bad"><failure message="x"/></testcase></testsuite>`
+	a := filepath.Join(dir, "a")
+	b := filepath.Join(dir, "b")
+	_ = os.MkdirAll(a, 0o755)
+	_ = os.MkdirAll(b, 0o755)
+	if err := os.WriteFile(filepath.Join(a, "junit.xml"), []byte(xml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(b, "junit.xml"), []byte(xml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum, ok := SummarizeJUnitDir(dir)
+	if !ok || sum.Passed != 2 || sum.Failed != 1 {
+		t.Fatalf("%+v ok=%v", sum, ok)
+	}
+}
+
+func TestRunLogResultAndOverlappingArtifacts(t *testing.T) {
+	db, err := registry.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	xml := `<?xml version="1.0"?><testsuite><testcase name="ok"/><testcase name="ok2"/><testcase name="bad"><failure message="boom"/></testcase></testsuite>`
+	fileTar := tarBytes(t, "junit.xml", xml)
+	dirTar := tarBytes(t, "artifacts/junit.xml", xml)
+	eng := NewFake()
+	eng.CopyFromData = map[string][]byte{
+		"/work/junit.xml": fileTar,
+		"/artifacts":      dirTar,
+	}
+	cfg := config.Default().WithDir(t.TempDir())
+	q := NewQueue(cfg, db, eng, nil, nil)
+	pr := &profile.Profile{Name: "demo", Path: t.TempDir(), E2E: profile.E2EConfig{
+		Image: "demo", Command: "echo hi",
+		Artifacts: []string{"/work/junit.xml", "/artifacts"},
+	}}
+	run, err := q.Enqueue(RunRequest{Project: "demo"}, pr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	var got registry.E2ERun
+	for time.Now().Before(deadline) {
+		got, _ = db.GetE2ERun(run.ID)
+		if got.Status == "failed" || got.Status == "passed" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got.SummaryText == "" {
+		got = DecorateRun(got)
+	}
+	if got.Status != "failed" {
+		t.Fatalf("status %s summary %s", got.Status, got.Summary)
+	}
+	sum := SummaryText(got.Summary)
+	if sum != "2 passed, 1 failed" {
+		t.Fatalf("summary %s raw %s", sum, got.Summary)
+	}
+	logPath := filepath.Join(got.ArtifactPath, "run.log")
+	body, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(body)
+	if !strings.Contains(s, "[teardown]") {
+		t.Fatalf("missing teardown %s", s)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(s), strings.TrimSpace(s[strings.LastIndex(s, "[result]"):])) {
+		t.Fatalf("log %s", s)
+	}
+	if !strings.Contains(s, "[result]") {
+		t.Fatalf("missing result %s", s)
+	}
+	idx := strings.LastIndex(s, "[result]")
+	if idx < 0 || strings.Contains(s[idx:], "\n[") {
+		t.Fatalf("result not last %s", s)
+	}
+}
+
+func tarBytes(t *testing.T, name, body string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if strings.Contains(name, "/") {
+		dir := name[:strings.LastIndex(name, "/")]
+		_ = tw.WriteHeader(&tar.Header{Name: dir + "/", Mode: 0755, Typeflag: tar.TypeDir})
+	}
+	_ = tw.WriteHeader(&tar.Header{Name: name, Size: int64(len(body)), Mode: 0644})
+	_, _ = tw.Write([]byte(body))
+	_ = tw.Close()
+	return buf.Bytes()
 }

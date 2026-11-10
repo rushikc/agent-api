@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"io"
 	"reflect"
+	"time"
 )
+
+var timeType = reflect.TypeOf(time.Time{})
 
 func Normalize(v any) any {
 	if v == nil {
@@ -14,45 +17,72 @@ func Normalize(v any) any {
 }
 
 func normalizeValue(rv reflect.Value) reflect.Value {
-	for rv.Kind() == reflect.Interface || rv.Kind() == reflect.Pointer {
+	if !rv.IsValid() {
+		return rv
+	}
+	switch rv.Kind() {
+	case reflect.Interface:
 		if rv.IsNil() {
-			if rv.Kind() == reflect.Pointer && rv.Type().Elem().Kind() == reflect.Slice {
+			return rv
+		}
+		return normalizeValue(rv.Elem())
+	case reflect.Pointer:
+		if rv.IsNil() {
+			if rv.Type().Elem().Kind() == reflect.Slice {
 				return reflect.MakeSlice(rv.Type().Elem(), 0, 0)
 			}
 			return rv
 		}
-		rv = rv.Elem()
-	}
-	switch rv.Kind() {
+		elem := normalizeValue(rv.Elem())
+		if !elem.IsValid() || !elem.Type().AssignableTo(rv.Type().Elem()) {
+			return rv
+		}
+		out := reflect.New(rv.Type().Elem())
+		out.Elem().Set(elem)
+		return out
 	case reflect.Slice:
 		if rv.IsNil() {
 			return reflect.MakeSlice(rv.Type(), 0, 0)
 		}
 		out := reflect.MakeSlice(rv.Type(), rv.Len(), rv.Len())
 		for i := 0; i < rv.Len(); i++ {
-			out.Index(i).Set(normalizeValue(rv.Index(i)))
+			nv := normalizeValue(rv.Index(i))
+			if nv.IsValid() && nv.Type().AssignableTo(rv.Type().Elem()) {
+				out.Index(i).Set(nv)
+			} else {
+				out.Index(i).Set(rv.Index(i))
+			}
 		}
 		return out
 	case reflect.Map:
 		if rv.IsNil() {
 			return rv
 		}
+		out := reflect.MakeMapWithSize(rv.Type(), rv.Len())
 		for _, k := range rv.MapKeys() {
-			rv.SetMapIndex(k, normalizeValue(rv.MapIndex(k)))
+			nv := normalizeValue(rv.MapIndex(k))
+			if nv.IsValid() && nv.Type().AssignableTo(rv.Type().Elem()) {
+				out.SetMapIndex(k, nv)
+			} else {
+				out.SetMapIndex(k, rv.MapIndex(k))
+			}
 		}
-		return rv
+		return out
 	case reflect.Struct:
+		if rv.Type() == timeType {
+			return rv
+		}
 		out := reflect.New(rv.Type()).Elem()
 		out.Set(rv)
 		rt := rv.Type()
 		for i := 0; i < rv.NumField(); i++ {
-			if !out.Field(i).CanSet() {
+			if !out.Field(i).CanSet() || rt.Field(i).PkgPath != "" {
 				continue
 			}
-			if rt.Field(i).PkgPath != "" {
-				continue
+			nv := normalizeValue(out.Field(i))
+			if nv.IsValid() && nv.Type().AssignableTo(out.Field(i).Type()) {
+				out.Field(i).Set(nv)
 			}
-			out.Field(i).Set(normalizeValue(out.Field(i)))
 		}
 		return out
 	default:

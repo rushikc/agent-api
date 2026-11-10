@@ -133,4 +133,8 @@ func TestFormatShort(t *testing.T) {
 	if s != "3 active | 2 shadow | 12.4% | 1.2 GB" {
 		t.Fatal(s)
 	}
+	unknown := FormatShort(Snapshot{Active: 1, Shadow: 0, CPUPct: -1, RSSBytes: 0})
+	if unknown != "1 active | 0 shadow | - | 0 B" {
+		t.Fatal(unknown)
+	}
 }

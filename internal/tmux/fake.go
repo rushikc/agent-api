@@ -45,6 +45,7 @@ type fakeWindow struct {
 	DeadStatus   int
 	RemainOnExit bool
 	Killed       bool
+	Output       string
 }
 
 func NewFake() *Fake {
@@ -181,6 +182,15 @@ func (f *Fake) ListSessions() ([]Session, error) {
 	return out, nil
 }
 
+func (f *Fake) SetPaneOutput(target, s string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	w := f.window(target)
+	if w != nil {
+		w.Output = s
+	}
+}
+
 func (f *Fake) CapturePane(target string, start int) (string, error) {
 	_ = start
 	f.mu.Lock()
@@ -191,6 +201,9 @@ func (f *Fake) CapturePane(target string, start int) (string, error) {
 	w := f.window(target)
 	if w == nil {
 		return "", fmt.Errorf("no pane %s", target)
+	}
+	if w.Output != "" {
+		return w.Output, nil
 	}
 	return strings.Join(w.Command, " ") + " output\n", nil
 }

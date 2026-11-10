@@ -233,8 +233,6 @@ func FormatShort(snap Snapshot) string {
 	cpu := "-"
 	if snap.CPUPct >= 0 {
 		cpu = fmt.Sprintf("%.1f%%", snap.CPUPct)
-	} else {
-		cpu = "0.0%"
 	}
 	return fmt.Sprintf("%d active | %d shadow | %s | %s", snap.Active, snap.Shadow, cpu, formatBytes(snap.RSSBytes))
 }

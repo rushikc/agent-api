@@ -18,6 +18,20 @@ func EncodeArgv(argv []string) string {
 	return string(b)
 }
 
+func ShellArgv(command string) []string {
+	if strings.TrimSpace(command) == "" {
+		return nil
+	}
+	return []string{"/bin/sh", "-c", command}
+}
+
+func ResolveArgv(argv []string, command string) []string {
+	if len(argv) > 0 {
+		return argv
+	}
+	return ShellArgv(command)
+}
+
 func ParseArgv(s registry.Session) []string {
 	if s.ArgvJSON != "" {
 		var argv []string
@@ -34,7 +48,7 @@ func ParseArgv(s registry.Session) []string {
 			return argv
 		}
 	}
-	return strings.Fields(s.Command)
+	return ShellArgv(s.Command)
 }
 
 func DisplayCommand(argv []string) string {

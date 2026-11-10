@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -161,7 +162,7 @@ func ListOrphansAt(cfg *config.Config, sessions []registry.Session, src monitor.
 	}
 	var out []Orphan
 	for _, p := range procs {
-		if !names[strings.ToLower(p.Name)] {
+		if !matchProcessName(p.Name, names) {
 			continue
 		}
 		if owned[p.PID] {
@@ -182,6 +183,20 @@ func ListOrphansAt(cfg *config.Config, sessions []registry.Session, src monitor.
 		out = append(out, Orphan{PID: p.PID, Name: p.Name, Cwd: cwd, CPUPct: p.CPUPct, RSS: p.RSS, Project: proj})
 	}
 	return out, nil
+}
+
+func matchProcessName(name string, names map[string]bool) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	if n == "" {
+		return false
+	}
+	if names[n] {
+		return true
+	}
+	if i := strings.IndexAny(n, " \t"); i >= 0 {
+		n = n[:i]
+	}
+	return names[filepath.Base(n)]
 }
 
 func projectForCwd(cfg *config.Config, cwd string) string {

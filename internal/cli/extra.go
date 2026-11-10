@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -234,12 +235,18 @@ func newReloadCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "reload",
 		Short: "Reload tmux keybindings into -L devhub",
-		RunE: withService(func(svc *core.Service, args []string) error {
-			if err := svc.ApplyKeybindingsForce(true); err != nil {
-				return err
+		RunE: withServiceOpt(false, func(svc *core.Service, args []string) error {
+			err := svc.ApplyKeybindingsForce(true)
+			if err == nil {
+				n := core.CountBindKeys(core.RenderTmuxConf(svc.Cfg, svc.Executable()))
+				fmt.Printf("reloaded %d bindings into running server\n", n)
+				return nil
 			}
-			fmt.Println("sourced", svc.Cfg.TmuxConfPath())
-			return nil
+			if errors.Is(err, tmux.ErrNoServer) {
+				fmt.Println("bindings written; they'll load when you run dev")
+				return nil
+			}
+			return err
 		}),
 	}
 }

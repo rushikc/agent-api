@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/rushikesh/devhub/internal/config"
 	"github.com/rushikesh/devhub/internal/core"
@@ -181,21 +180,13 @@ func newLsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			time.Sleep(200 * time.Millisecond)
-			rows, err = svc.List(all)
-			if err != nil {
-				return err
-			}
 			if asJSON {
 				return printJSON(rows)
 			}
 			var out [][]string
 			for _, r := range rows {
 				s := r.Session
-				cpu := "-"
-				if r.CPUPct >= 0 {
-					cpu = fmt.Sprintf("%.1f", r.CPUPct)
-				}
+				cpu := monitor.FormatCPUPct(r.CPUPct)
 				out = append(out, []string{s.Project, s.Name, string(s.Kind), string(s.Status), cpu, formatRSS(r.RSSBytes), s.Command})
 			}
 			return printTable(os.Stdout, []string{"PROJECT", "NAME", "KIND", "STATUS", "CPU%", "RSS", "COMMAND"}, out)

@@ -34,6 +34,7 @@ type Request struct {
 	Refresh        bool     `json:"refresh"`
 	Nested         bool     `json:"nested"`
 	IncludeVolumes bool     `json:"include_volumes"`
+	IncludeHidden  bool     `json:"include_hidden,omitempty"`
 	Depth          int      `json:"depth,omitempty"`
 }
 
@@ -110,7 +111,7 @@ func (r *Runner) run(ctx context.Context, j *Job, req Request) {
 			r.set(j, func() {
 				j.Status = JobDone
 				j.Result = res
-				j.Progress = Progress{Dirs: res.Dirs, Repos: len(res.Repos), Denied: res.Denied, Privacy: res.PrivacyDenied}
+				j.Progress = Progress{Dirs: res.Dirs, Repos: len(res.Repos), Denied: res.Denied, Privacy: res.PrivacyDenied, ElapsedMS: res.DurationMS, Elapsed: res.Duration}
 			})
 			return
 		}
@@ -120,8 +121,10 @@ func (r *Runner) run(ctx context.Context, j *Job, req Request) {
 		Depth:          depth,
 		Nested:         req.Nested,
 		IncludeVolumes: vols,
+		IncludeHidden:  req.IncludeHidden || (cfg != nil && cfg.Scan.IncludeHidden),
 		Exclude:        exclude,
 		Projects:       projects,
+		AllowRoots:     ExtraAllowRoots(cfg, req.Paths),
 		Progress: func(p Progress) {
 			r.set(j, func() { j.Progress = p })
 		},
@@ -139,7 +142,7 @@ func (r *Runner) run(ctx context.Context, j *Job, req Request) {
 	r.set(j, func() {
 		j.Status = JobDone
 		j.Result = res
-		j.Progress = Progress{Dirs: res.Dirs, Repos: len(res.Repos), Denied: res.Denied, Privacy: res.PrivacyDenied, Elapsed: res.Duration}
+		j.Progress = Progress{Dirs: res.Dirs, Repos: len(res.Repos), Denied: res.Denied, Privacy: res.PrivacyDenied, ElapsedMS: res.DurationMS, Elapsed: res.Duration}
 	})
 }
 

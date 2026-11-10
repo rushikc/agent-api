@@ -100,6 +100,13 @@ func sessionHaystack(v core.SessionView) string {
 	return strings.Join([]string{s.Project, s.Name, string(s.Kind), string(s.Status), s.Command}, " ")
 }
 
+func formatCPUPct(pct float64) string {
+	if pct < 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.1f", pct)
+}
+
 func formatRSS(n uint64) string {
 	if n >= 1024*1024*1024 {
 		return fmt.Sprintf("%.1f GB", float64(n)/(1024*1024*1024))

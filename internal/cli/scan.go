@@ -19,6 +19,7 @@ import (
 type scanFlags struct {
 	all            bool
 	includeVolumes bool
+	includeHidden  bool
 	jsonOut        bool
 	noUI           bool
 	refresh        bool
@@ -51,6 +52,7 @@ func bindScanFlags(cmd *cobra.Command, f *scanFlags) {
 	fs.BoolVar(&f.noUI, "no-ui", false, "print a table only")
 	fs.BoolVar(&f.refresh, "refresh", false, "ignore the scan cache")
 	fs.BoolVar(&f.nested, "nested", false, "include nested git repos")
+	fs.BoolVar(&f.includeHidden, "include-hidden", false, "scan hidden dirs under $HOME")
 	fs.StringArrayVar(&f.paths, "path", nil, "extra scan root (repeatable)")
 	fs.IntVar(&f.depth, "depth", 0, "max directory depth")
 }
@@ -102,13 +104,16 @@ func runScan(svc *core.Service, f scanFlags, cacheOnly bool) error {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		start := time.Now()
+		hidden := f.includeHidden || (cfg != nil && cfg.Scan.IncludeHidden)
 		res, err := scan.Walk(ctx, scan.Options{
 			Roots:          roots,
 			Depth:          depth,
 			Nested:         f.nested,
 			IncludeVolumes: vols,
+			IncludeHidden:  hidden,
 			Exclude:        exclude,
 			Projects:       projects,
+			AllowRoots:     scan.ExtraAllowRoots(cfg, f.paths),
 			Progress: func(p scan.Progress) {
 				fmt.Fprintf(os.Stderr, "\rscanning %d dirs  %d repos  %s   ", p.Dirs, p.Repos, time.Since(start).Truncate(time.Millisecond))
 			},

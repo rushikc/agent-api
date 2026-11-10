@@ -36,6 +36,34 @@ var skipPrefixes = []string{
 	"/opt/homebrew",
 }
 
+var homeToolDirs = []string{
+	".nvm",
+	".cursor",
+	".codex",
+	".claude",
+	".vscode",
+	".rustup",
+	".cargo",
+	".pyenv",
+	".rbenv",
+	".sdkman",
+	".gradle",
+	".m2",
+	".npm",
+	".pnpm-store",
+	".bun",
+	".deno",
+	".local/share",
+	".devhub",
+}
+
+type skipOpts struct {
+	exclude       []string
+	home          string
+	includeHidden bool
+	allow         []string
+}
+
 func homeDir() string {
 	h, err := os.UserHomeDir()
 	if err != nil {
@@ -44,9 +72,15 @@ func homeDir() string {
 	return h
 }
 
-func skipPath(path string, extra []string) bool {
+func skipPath(path string, opts skipOpts) bool {
 	clean := filepath.Clean(path)
 	base := filepath.Base(clean)
+	home := opts.home
+	if home == "" {
+		home = homeDir()
+	}
+	home = filepath.Clean(home)
+
 	if _, ok := skipNames[base]; ok {
 		return true
 	}
@@ -59,7 +93,7 @@ func skipPath(path string, extra []string) bool {
 			return true
 		}
 	}
-	if home := homeDir(); home != "" {
+	if home != "" {
 		lib := filepath.Join(home, "Library")
 		if clean == lib || strings.HasPrefix(clean, lib+string(filepath.Separator)) {
 			return true
@@ -72,13 +106,38 @@ func skipPath(path string, extra []string) bool {
 		if clean == cs || strings.HasPrefix(clean, cs+string(filepath.Separator)) {
 			return true
 		}
+		if !opts.includeHidden && !isAllowed(clean, opts.allow) {
+			if filepath.Dir(clean) == home && strings.HasPrefix(base, ".") {
+				return true
+			}
+			for _, t := range homeToolDirs {
+				p := filepath.Join(home, t)
+				if clean == p || strings.HasPrefix(clean, p+string(filepath.Separator)) {
+					return true
+				}
+			}
+		}
 	}
-	for _, g := range extra {
+	for _, g := range opts.exclude {
 		g = strings.TrimSpace(g)
 		if g == "" {
 			continue
 		}
 		if matchGlob(g, clean) || matchGlob(g, base) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAllowed(path string, roots []string) bool {
+	home := homeDir()
+	for _, r := range roots {
+		r = filepath.Clean(r)
+		if r == "" || r == "." || (home != "" && r == filepath.Clean(home)) {
+			continue
+		}
+		if path == r || strings.HasPrefix(path, r+string(filepath.Separator)) {
 			return true
 		}
 	}
@@ -106,12 +165,15 @@ func matchGlob(pat, name string) bool {
 	return false
 }
 
-func isPrivacyDir(path string) bool {
-	home := homeDir()
+func isPrivacyDir(path, home string) bool {
+	if home == "" {
+		home = homeDir()
+	}
 	if home == "" {
 		return false
 	}
 	clean := filepath.Clean(path)
+	home = filepath.Clean(home)
 	for _, name := range []string{"Desktop", "Documents", "Downloads"} {
 		p := filepath.Join(home, name)
 		if clean == p || strings.HasPrefix(clean, p+string(filepath.Separator)) {

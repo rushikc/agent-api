@@ -475,8 +475,13 @@ func (m scanModel) rescan(all bool) tea.Cmd {
 			exclude = cfg.Scan.Exclude
 			projects = cfg.Projects
 		}
+		hidden := false
+		if cfg != nil {
+			hidden = cfg.Scan.IncludeHidden
+		}
 		res, err := scan.Walk(context.Background(), scan.Options{
-			Roots: roots, Depth: depth, IncludeVolumes: vols, Exclude: exclude, Projects: projects,
+			Roots: roots, Depth: depth, IncludeVolumes: vols, IncludeHidden: hidden,
+			Exclude: exclude, Projects: projects, AllowRoots: scan.ExtraAllowRoots(cfg, nil),
 		})
 		if err == nil && cfg != nil {
 			_ = scan.SaveCache(cfg.ScanCachePath(), scan.CacheFromResult(res))

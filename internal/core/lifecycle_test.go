@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -110,6 +111,30 @@ func TestPeekRestartUsesWindowID(t *testing.T) {
 	}
 	if respawn != sess.TmuxTarget {
 		t.Fatalf("respawn %s want %s", respawn, sess.TmuxTarget)
+	}
+}
+
+func TestApplyKeybindingsNoServerWritesConf(t *testing.T) {
+	svc, fake := testService(t)
+	dir := t.TempDir()
+	svc.Cfg.WithDir(dir)
+	if err := os.MkdirAll(svc.Cfg.Dir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fake.NoServer = true
+	err := svc.ApplyKeybindingsForce(true)
+	if !errors.Is(err, tmux.ErrNoServer) {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := os.Stat(svc.Cfg.TmuxConfPath()); err != nil {
+		t.Fatal("conf not written", err)
+	}
+	if len(fake.Sourced) != 0 {
+		t.Fatal("should not source without server")
+	}
+	n := CountBindKeys(RenderTmuxConf(svc.Cfg, svc.Executable()))
+	if n < 10 {
+		t.Fatalf("bind-key count %d", n)
 	}
 }
 

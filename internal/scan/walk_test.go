@@ -156,3 +156,24 @@ func names(res *Result) []string {
 	}
 	return out
 }
+
+func TestWalkSkipsHomeDotDirs(t *testing.T) {
+	home := t.TempDir()
+	mustMkdirGit(t, filepath.Join(home, ".nvm", "foo"))
+	mustMkdirGit(t, filepath.Join(home, ".cursor", "plugins", "cache", "x"))
+	mustMkdirGit(t, filepath.Join(home, "WebstormProjects", "app"))
+	res, err := Walk(context.Background(), Options{Roots: []string{home}, Home: home, Depth: 8, Workers: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Repos) != 1 || res.Repos[0].Name != "app" {
+		t.Fatalf("default %v", names(res))
+	}
+	res, err = Walk(context.Background(), Options{Roots: []string{home}, Home: home, Depth: 8, Workers: 4, IncludeHidden: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Repos) != 3 {
+		t.Fatalf("include-hidden %v", names(res))
+	}
+}

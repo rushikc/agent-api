@@ -3,6 +3,7 @@ package core
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -839,7 +840,24 @@ func (s *Service) ApplyKeybindingsForce(force bool) error {
 	if err := os.WriteFile(path+".hash", []byte(hash+"\n"), 0o644); err != nil {
 		return err
 	}
-	return s.Tmux.SourceFile(path)
+	if s.Tmux == nil {
+		return tmux.ErrNoServer
+	}
+	err := s.Tmux.SourceFile(path)
+	if errors.Is(err, tmux.ErrNoServer) {
+		return tmux.ErrNoServer
+	}
+	return err
+}
+
+func CountBindKeys(conf string) int {
+	n := 0
+	for _, line := range strings.Split(conf, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "bind-key") {
+			n++
+		}
+	}
+	return n
 }
 
 func (s *Service) EnsureMonitor() error {

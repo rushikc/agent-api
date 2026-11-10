@@ -4,10 +4,14 @@ import (
 	"encoding/json"
 	"io"
 	"reflect"
+	"strings"
 	"time"
 )
 
-var timeType = reflect.TypeOf(time.Time{})
+var (
+	timeType     = reflect.TypeOf(time.Time{})
+	durationType = reflect.TypeOf(time.Duration(0))
+)
 
 func Normalize(v any) any {
 	if v == nil {
@@ -19,6 +23,9 @@ func Normalize(v any) any {
 func normalizeValue(rv reflect.Value) reflect.Value {
 	if !rv.IsValid() {
 		return rv
+	}
+	if rv.Type() == durationType {
+		return reflect.ValueOf(DurationMS(time.Duration(rv.Int())))
 	}
 	switch rv.Kind() {
 	case reflect.Interface:
@@ -72,6 +79,9 @@ func normalizeValue(rv reflect.Value) reflect.Value {
 		if rv.Type() == timeType {
 			return rv
 		}
+		if structHasDuration(rv.Type()) {
+			return normalizeDurationStruct(rv)
+		}
 		out := reflect.New(rv.Type()).Elem()
 		out.Set(rv)
 		rt := rv.Type()
@@ -88,6 +98,54 @@ func normalizeValue(rv reflect.Value) reflect.Value {
 	default:
 		return rv
 	}
+}
+
+func structHasDuration(t reflect.Type) bool {
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.PkgPath != "" {
+			continue
+		}
+		if f.Type == durationType {
+			return true
+		}
+		if f.Type.Kind() == reflect.Struct && f.Type != timeType && structHasDuration(f.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+func jsonFieldName(f reflect.StructField) (string, bool) {
+	tag := f.Tag.Get("json")
+	if tag == "-" {
+		return "", false
+	}
+	name := f.Name
+	if tag != "" {
+		n := strings.Split(tag, ",")[0]
+		if n != "" {
+			name = n
+		}
+	}
+	return name, true
+}
+
+func normalizeDurationStruct(rv reflect.Value) reflect.Value {
+	m := map[string]any{}
+	rt := rv.Type()
+	for i := 0; i < rv.NumField(); i++ {
+		f := rt.Field(i)
+		if f.PkgPath != "" {
+			continue
+		}
+		name, ok := jsonFieldName(f)
+		if !ok {
+			continue
+		}
+		m[name] = normalizeValue(rv.Field(i)).Interface()
+	}
+	return reflect.ValueOf(m)
 }
 
 func Encode(w io.Writer, v any) error {

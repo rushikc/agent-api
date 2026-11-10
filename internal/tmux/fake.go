@@ -24,6 +24,7 @@ type Fake struct {
 	Current   string
 	Sourced   []string
 	Fail      error
+	NoServer  bool
 	Calls     []Call
 	nextID    int
 	OmitPanes bool
@@ -302,6 +303,9 @@ func (f *Fake) MoveWindow(src, dstSession string) error {
 func (f *Fake) SourceFile(path string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.NoServer {
+		return ErrNoServer
+	}
 	if f.Fail != nil {
 		return f.Fail
 	}

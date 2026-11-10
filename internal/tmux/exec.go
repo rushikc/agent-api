@@ -349,7 +349,11 @@ func (c *CLI) MoveWindow(src, dstSession string) error {
 }
 
 func (c *CLI) SourceFile(path string) error {
-	return c.run("source-file", path)
+	err := c.run("source-file", path)
+	if err != nil && (strings.Contains(err.Error(), "no server running") || strings.Contains(err.Error(), "no sessions")) {
+		return ErrNoServer
+	}
+	return err
 }
 
 func (c *CLI) CurrentSession() (string, error) {

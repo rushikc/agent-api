@@ -14,14 +14,15 @@ import (
 
 // Proc is one row from `ps`.
 type Proc struct {
-	PID    int32
-	PPID   int32
-	UID    int32
-	RSS    uint64
-	CPUPct float64
-	Name   string
-	Cwd    string
-	Start  int64
+	PID     int32
+	PPID    int32
+	UID     int32
+	RSS     uint64
+	CPUPct  float64
+	CPUTime float64
+	Name    string
+	Cwd     string
+	Start   int64
 }
 
 // DefaultSource is a CGO-free ProcSource backed by `ps` (and lsof for cwd).
@@ -49,7 +50,7 @@ func psArgs() []string {
 	if runtime.GOOS == "darwin" {
 		elapsed = "etime="
 	}
-	return []string{"-axo", "pid=,ppid=,uid=,rss=,pcpu=," + elapsed + ",comm="}
+	return []string{"-axo", "pid=,ppid=,uid=,rss=,pcpu=,time=," + elapsed + ",comm="}
 }
 
 func (s *DefaultSource) refresh() []Proc {
@@ -148,12 +149,45 @@ func ParseElapsed(s string) int64 {
 	return days*86400 + h*3600 + m*60 + sec
 }
 
+func ParseCPUTime(s string) float64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	var days float64
+	if i := strings.IndexByte(s, '-'); i >= 0 {
+		d, err := strconv.ParseFloat(s[:i], 64)
+		if err != nil {
+			return 0
+		}
+		days = d
+		s = s[i+1:]
+	}
+	parts := strings.Split(s, ":")
+	switch len(parts) {
+	case 1:
+		v, _ := strconv.ParseFloat(parts[0], 64)
+		return days*86400 + v
+	case 2:
+		m, _ := strconv.ParseFloat(parts[0], 64)
+		sec, _ := strconv.ParseFloat(parts[1], 64)
+		return days*86400 + m*60 + sec
+	case 3:
+		h, _ := strconv.ParseFloat(parts[0], 64)
+		m, _ := strconv.ParseFloat(parts[1], 64)
+		sec, _ := strconv.ParseFloat(parts[2], 64)
+		return days*86400 + h*3600 + m*60 + sec
+	default:
+		return 0
+	}
+}
+
 func ParsePS(b []byte) []Proc {
 	var out []Proc
 	now := time.Now().Unix()
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	for sc.Scan() {
-		fields := splitPS(sc.Text(), 7)
+		fields := splitPS(sc.Text(), 8)
 		if len(fields) < 6 {
 			continue
 		}
@@ -164,7 +198,16 @@ func ParsePS(b []byte) []Proc {
 		cpu, _ := strconv.ParseFloat(fields[4], 64)
 		name := fields[5]
 		var start int64
-		if len(fields) >= 7 {
+		var cpuTime float64
+		switch {
+		case len(fields) >= 8:
+			cpuTime = ParseCPUTime(fields[5])
+			etimes := ParseElapsed(fields[6])
+			name = fields[7]
+			if etimes > 0 {
+				start = now - etimes
+			}
+		case len(fields) >= 7:
 			etimes := ParseElapsed(fields[5])
 			name = fields[6]
 			if etimes > 0 {
@@ -176,7 +219,7 @@ func ParsePS(b []byte) []Proc {
 		}
 		out = append(out, Proc{
 			PID: int32(pid), PPID: int32(ppid), UID: int32(uid),
-			RSS: rssKB * 1024, CPUPct: cpu, Name: name, Start: start,
+			RSS: rssKB * 1024, CPUPct: cpu, CPUTime: cpuTime, Name: name, Start: start,
 		})
 	}
 	return out
@@ -203,7 +246,7 @@ func (s *DefaultSource) Children(pid int32) ([]int32, error) {
 func (s *DefaultSource) CPUTimes(pid int32) (float64, error) {
 	for _, p := range s.refresh() {
 		if p.PID == pid {
-			return p.CPUPct, nil
+			return p.CPUTime, nil
 		}
 	}
 	return 0, fmt.Errorf("no pid %d", pid)

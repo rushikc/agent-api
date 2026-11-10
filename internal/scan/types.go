@@ -1,38 +1,51 @@
 package scan
 
-import "time"
+import (
+	"time"
+
+	"github.com/rushikesh/devhub/internal/jsonx"
+)
 
 type Options struct {
 	Roots          []string
 	Depth          int
 	Nested         bool
 	IncludeVolumes bool
+	IncludeHidden  bool
 	Exclude        []string
 	Workers        int
 	Projects       map[string]string
+	Home           string
+	AllowRoots     []string
 	Progress       func(Progress)
 }
 
 type Progress struct {
-	Dirs    int           `json:"dirs"`
-	Repos   int           `json:"repos"`
-	Denied  int           `json:"denied"`
-	Current string        `json:"current,omitempty"`
-	Elapsed time.Duration `json:"elapsed_ms"`
-	Privacy bool          `json:"privacy_denied,omitempty"`
+	Dirs      int     `json:"dirs"`
+	Repos     int     `json:"repos"`
+	Denied    int     `json:"denied"`
+	Current   string  `json:"current,omitempty"`
+	ElapsedMS float64 `json:"elapsed_ms"`
+	Elapsed   string  `json:"elapsed,omitempty"`
+	Privacy   bool    `json:"privacy_denied,omitempty"`
 }
 
 type Result struct {
-	Repos          []Repo        `json:"repos"`
-	Dirs           int           `json:"dirs"`
-	Denied         int           `json:"denied"`
-	PrivacyDenied  bool          `json:"privacy_denied"`
-	Roots          []string      `json:"roots"`
-	Depth          int           `json:"depth"`
-	Nested         bool          `json:"nested"`
-	IncludeVolumes bool          `json:"include_volumes"`
-	Duration       time.Duration `json:"duration_ms"`
-	Partial        bool          `json:"partial"`
+	Repos          []Repo   `json:"repos"`
+	Dirs           int      `json:"dirs"`
+	Denied         int      `json:"denied"`
+	PrivacyDenied  bool     `json:"privacy_denied"`
+	Roots          []string `json:"roots"`
+	Depth          int      `json:"depth"`
+	Nested         bool     `json:"nested"`
+	IncludeVolumes bool     `json:"include_volumes"`
+	DurationMS     float64  `json:"duration_ms"`
+	Duration       string   `json:"duration"`
+	Partial        bool     `json:"partial"`
+}
+
+func setElapsed(d time.Duration) (float64, string) {
+	return jsonx.DurationMS(d), jsonx.FormatDuration(d)
 }
 
 type Repo struct {

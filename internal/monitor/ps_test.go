@@ -7,7 +7,7 @@ import (
 )
 
 func TestParsePS(t *testing.T) {
-	in := []byte("  10  1 501  1024  1.5 node\n  11 10 501  2048  0.0 npm\n")
+	in := []byte("  10  1 501  1024  1.5 0:00.10 00:01 node\n  11 10 501  2048  0.0 0:00.00 00:01 npm\n")
 	got := ParsePS(in)
 	if len(got) != 2 || got[0].PID != 10 || got[0].PPID != 1 || got[1].PPID != 10 {
 		t.Fatalf("%+v", got)
@@ -15,9 +15,24 @@ func TestParsePS(t *testing.T) {
 	if got[0].RSS != 1024*1024 {
 		t.Fatalf("rss %d", got[0].RSS)
 	}
+	if got[0].CPUTime < 0.09 || got[0].CPUTime > 0.11 {
+		t.Fatalf("cputime %f", got[0].CPUTime)
+	}
 	tree := ParsePSTree(in)
 	if len(tree[10]) != 1 || tree[10][0] != 11 {
 		t.Fatalf("%+v", tree)
+	}
+}
+
+func TestParseCPUTime(t *testing.T) {
+	if got := ParseCPUTime("0:00.12"); got < 0.119 || got > 0.121 {
+		t.Fatal(got)
+	}
+	if got := ParseCPUTime("1:02.45"); got < 62.44 || got > 62.46 {
+		t.Fatal(got)
+	}
+	if got := ParseCPUTime("1:02:03"); got != 3723 {
+		t.Fatal(got)
 	}
 }
 
@@ -40,7 +55,7 @@ func TestParseElapsed(t *testing.T) {
 
 func TestParsePSFixtures(t *testing.T) {
 	now := time.Now().Unix()
-	macos := []byte("  42  1 501  2048  0.3 05:12 /usr/bin/Google Chrome Helper\n")
+	macos := []byte("  42  1 501  2048  0.3 0:01.20 05:12 /usr/bin/Google Chrome Helper\n")
 	got := ParsePS(macos)
 	if len(got) != 1 {
 		t.Fatalf("%+v", got)
@@ -56,7 +71,7 @@ func TestParsePSFixtures(t *testing.T) {
 		t.Fatalf("start %d want ~%d", got[0].Start, wantStart)
 	}
 
-	linux := []byte("  99  1 1000  512  1.0 3723 nginx: worker process\n")
+	linux := []byte("  99  1 1000  512  1.0 0:00.50 3723 nginx: worker process\n")
 	got = ParsePS(linux)
 	if len(got) != 1 || got[0].PID != 99 || !strings.Contains(got[0].Name, "nginx") {
 		t.Fatalf("%+v", got)
@@ -65,14 +80,14 @@ func TestParsePSFixtures(t *testing.T) {
 		t.Fatalf("linux start %d", got[0].Start)
 	}
 
-	day := []byte("  7  1 501  100  0.0 2-03:04:05 node\n")
+	day := []byte("  7  1 501  100  0.0 0:00.00 2-03:04:05 node\n")
 	got = ParsePS(day)
 	el := ParseElapsed("2-03:04:05")
 	if got[0].Start < now-el-2 || got[0].Start > now-el+2 {
 		t.Fatalf("day start %d el %d", got[0].Start, el)
 	}
 
-	hms := []byte("  8  1 501  100  0.1 01:02:03 node\n")
+	hms := []byte("  8  1 501  100  0.1 0:00.01 01:02:03 node\n")
 	got = ParsePS(hms)
 	el = ParseElapsed("01:02:03")
 	if got[0].Start < now-el-2 || got[0].Start > now-el+2 {

@@ -128,6 +128,34 @@ func TestCPUFirstSampleUnknownAndReuse(t *testing.T) {
 	}
 }
 
+func TestCPUShortIntervalAndTreeChange(t *testing.T) {
+	src := fakeProc{
+		children: map[int32][]int32{10: {11}, 11: nil},
+		cpu:      map[int32]float64{10: 1.0, 11: 0.5},
+		rss:      map[int32]uint64{10: 100, 11: 50},
+		start:    map[int32]int64{10: 1, 11: 1},
+	}
+	t0 := time.Unix(0, 0)
+	s1, last := SumTree(src, nil, t0, 10)
+	if s1.CPUPct >= 0 {
+		t.Fatalf("first %f", s1.CPUPct)
+	}
+	src.children = map[int32][]int32{10: nil}
+	src.cpu = map[int32]float64{10: 1.0}
+	s2, last := SumTree(src, last, t0.Add(200*time.Millisecond), 10)
+	if s2.CPUPct >= 0 {
+		t.Fatalf("200ms should stay unknown, got %f", s2.CPUPct)
+	}
+	src.cpu[10] = 1.01
+	s3, _ := SumTree(src, last, t0.Add(200*time.Millisecond+time.Second), 10)
+	if s3.CPUPct < 0 || s3.CPUPct > 5 {
+		t.Fatalf("expected ~1%% got %f cap %f", s3.CPUPct, CPUCap())
+	}
+	if s3.CPUPct > CPUCap()/2 {
+		t.Fatalf("spike %f", s3.CPUPct)
+	}
+}
+
 func TestFormatShort(t *testing.T) {
 	s := FormatShort(Snapshot{Active: 3, Shadow: 2, CPUPct: 12.4, RSSBytes: 1288490188})
 	if s != "3 active | 2 shadow | 12.4% | 1.2 GB" {

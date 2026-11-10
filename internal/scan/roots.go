@@ -74,6 +74,15 @@ func ResolveRoots(cfg *config.Config, all bool, extra []string, includeVolumes b
 	return roots
 }
 
+func ExtraAllowRoots(cfg *config.Config, extra []string) []string {
+	var out []string
+	if cfg != nil {
+		out = append(out, cfg.Scan.Roots...)
+	}
+	out = append(out, extra...)
+	return out
+}
+
 func ResolveDepth(cfg *config.Config, all bool, flag int) int {
 	if flag > 0 {
 		return flag

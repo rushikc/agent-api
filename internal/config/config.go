@@ -78,7 +78,8 @@ type ScanConfig struct {
 	Exclude        []string `yaml:"exclude"`
 	DepthDesktop   int      `yaml:"depth_desktop"`
 	DepthAll       int      `yaml:"depth_all"`
-	IncludeVolumes bool     `yaml:"include_volumes"`
+	IncludeVolumes bool     `yaml:"include_volumes,omitempty"`
+	IncludeHidden  bool     `yaml:"include_hidden,omitempty"`
 }
 
 type AlertsConfig struct {
@@ -123,9 +124,10 @@ type Config struct {
 	GCP                   GCPConfig           `yaml:"gcp"`
 	E2E                   E2EGlobalConfig     `yaml:"e2e"`
 	Alerts                AlertsConfig        `yaml:"alerts"`
-	Scan                  ScanConfig          `yaml:"scan"`
+	Scan                  ScanConfig          `yaml:"scan,omitempty"`
 	path                  string
 	dir                   string
+	doc                   *yaml.Node
 }
 
 func Dir() (string, error) {
@@ -181,10 +183,19 @@ func Load() (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	cfg.attachDoc(data)
 	cfg.normalize()
 	cfg.dir = dir
 	cfg.path = path
 	return cfg, nil
+}
+
+func (c *Config) attachDoc(data []byte) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return
+	}
+	c.doc = &doc
 }
 
 func (c *Config) Save() error {
@@ -199,14 +210,121 @@ func (c *Config) Save() error {
 	if err := os.MkdirAll(c.dir, 0o755); err != nil {
 		return err
 	}
-	data, err := yaml.Marshal(c)
+	if c.doc == nil {
+		if b, err := os.ReadFile(c.path); err == nil && len(b) > 0 {
+			c.attachDoc(b)
+		}
+	}
+	var data []byte
+	var err error
+	if c.doc != nil {
+		c.patchDoc()
+		data, err = yaml.Marshal(c.doc)
+	} else {
+		data, err = c.marshalMinimal()
+	}
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
 	if err := os.WriteFile(c.path, data, 0o644); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
+	c.attachDoc(data)
 	return nil
+}
+
+func (c *Config) marshalMinimal() ([]byte, error) {
+	type mini struct {
+		Prefix                string              `yaml:"prefix,omitempty"`
+		Keys                  Keys                `yaml:"keys,omitempty"`
+		Projects              map[string]string   `yaml:"projects"`
+		ProjectColors         map[string]string   `yaml:"project_colors,omitempty"`
+		DefaultShadowCommands map[string][]string `yaml:"default_shadow_commands,omitempty"`
+	}
+	return yaml.Marshal(mini{
+		Prefix:                c.Prefix,
+		Keys:                  c.Keys,
+		Projects:              c.Projects,
+		ProjectColors:         c.ProjectColors,
+		DefaultShadowCommands: c.DefaultShadowCommands,
+	})
+}
+
+func (c *Config) patchDoc() {
+	root := mappingRoot(c.doc)
+	if root == nil {
+		return
+	}
+	setYAMLKey(root, "projects", c.Projects, true)
+	if hasYAMLKey(root, "project_colors") || len(c.ProjectColors) > 0 {
+		setYAMLKey(root, "project_colors", c.ProjectColors, hasYAMLKey(root, "project_colors") || len(c.ProjectColors) > 0)
+	}
+	if hasYAMLKey(root, "default_shadow_commands") {
+		setYAMLKey(root, "default_shadow_commands", c.DefaultShadowCommands, false)
+	}
+	if hasYAMLKey(root, "prefix") && c.Prefix != "" {
+		setYAMLKey(root, "prefix", c.Prefix, false)
+	}
+	if hasYAMLKey(root, "keys") {
+		setYAMLKey(root, "keys", c.Keys, false)
+	}
+}
+
+func mappingRoot(doc *yaml.Node) *yaml.Node {
+	if doc == nil {
+		return nil
+	}
+	n := doc
+	if n.Kind == yaml.DocumentNode && len(n.Content) > 0 {
+		n = n.Content[0]
+	}
+	if n.Kind != yaml.MappingNode {
+		return nil
+	}
+	return n
+}
+
+func hasYAMLKey(m *yaml.Node, key string) bool {
+	if m == nil {
+		return false
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return true
+		}
+	}
+	return false
+}
+
+func setYAMLKey(m *yaml.Node, key string, val any, create bool) {
+	if m == nil {
+		return
+	}
+	var wrap yaml.Node
+	b, err := yaml.Marshal(val)
+	if err != nil {
+		return
+	}
+	if err := yaml.Unmarshal(b, &wrap); err != nil {
+		return
+	}
+	valNode := &wrap
+	if wrap.Kind == yaml.DocumentNode && len(wrap.Content) > 0 {
+		valNode = wrap.Content[0]
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			m.Content[i+1] = valNode
+			return
+		}
+	}
+	if !create {
+		return
+	}
+	m.Content = append(m.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+		valNode,
+	)
 }
 
 func (c *Config) Dir() string {
@@ -357,6 +475,7 @@ func (c *Config) Reload() error {
 	if err := yaml.Unmarshal(data, next); err != nil {
 		return fmt.Errorf("parse config: %w", err)
 	}
+	next.attachDoc(data)
 	next.normalize()
 	next.dir = c.dir
 	next.path = c.path

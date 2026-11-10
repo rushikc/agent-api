@@ -1,10 +1,13 @@
 package tmux
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 )
+
+var ErrNoServer = errors.New("tmux: no server running")
 
 const (
 	SocketName    = "devhub"

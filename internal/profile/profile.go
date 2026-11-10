@@ -12,6 +12,7 @@ import (
 	"github.com/rushikesh/devhub/internal/config"
 	"github.com/rushikesh/devhub/internal/core"
 	"github.com/rushikesh/devhub/internal/janitor"
+	"github.com/rushikesh/devhub/internal/jsonx"
 	"github.com/rushikesh/devhub/internal/registry"
 	"gopkg.in/yaml.v3"
 )
@@ -82,6 +83,14 @@ type Ready struct {
 	HTTP    string        `yaml:"http" json:"http"`
 	Log     string        `yaml:"log" json:"log"`
 	Timeout time.Duration `yaml:"timeout" json:"timeout"`
+}
+
+func (r Ready) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		HTTP    string  `json:"http"`
+		Log     string  `json:"log"`
+		Timeout float64 `json:"timeout"`
+	}{HTTP: r.HTTP, Log: r.Log, Timeout: jsonx.DurationMS(r.Timeout)})
 }
 
 func Load(dir string) (*Profile, error) {

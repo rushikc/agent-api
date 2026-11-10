@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestExpandPath(t *testing.T) {
@@ -61,6 +63,51 @@ func TestUniqueProjectNameAndRename(t *testing.T) {
 	name, ok := cfg.ProjectNameForPath(other)
 	if !ok || name != "renamed" {
 		t.Fatalf("%s %v", name, ok)
+	}
+}
+
+func TestSaveDoesNotDumpScanDefaults(t *testing.T) {
+	dir := t.TempDir()
+	a := t.TempDir()
+	orig := "prefix: C-Space\nprojects:\n  a: " + a + "\n"
+	path := filepath.Join(dir, ConfigName)
+	if err := os.WriteFile(path, []byte(orig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Default().WithDir(dir)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.attachDoc(data)
+	cfg.normalize()
+	extra := t.TempDir()
+	if err := cfg.AddProject("temp", extra); err != nil {
+		t.Fatal(err)
+	}
+	mid, _ := os.ReadFile(path)
+	if !strings.Contains(string(mid), "temp:") {
+		t.Fatalf("expected new project:\n%s", mid)
+	}
+	if strings.Contains(string(mid), "scan:") || strings.Contains(string(mid), "depth_desktop") {
+		t.Fatalf("dumped scan defaults:\n%s", mid)
+	}
+	if err := cfg.RemoveProject("temp"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	s := string(got)
+	if strings.Contains(s, "scan:") || strings.Contains(s, "depth_desktop") || strings.Contains(s, "include_volumes") {
+		t.Fatalf("new keys:\n%s", s)
+	}
+	if strings.Contains(s, "temp:") {
+		t.Fatalf("temp project remained:\n%s", s)
+	}
+	if !strings.Contains(s, "a:") {
+		t.Fatalf("lost original project:\n%s", s)
 	}
 }
 

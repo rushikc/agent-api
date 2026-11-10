@@ -120,6 +120,35 @@ func TestNormalizeTable(t *testing.T) {
 			},
 		},
 		{
+			name: "struct time.Duration as milliseconds not nanoseconds",
+			in:   struct{ Wait time.Duration }{Wait: 2300 * time.Microsecond},
+			check: func(t *testing.T, b []byte) {
+				if bytes.Contains(b, []byte("2300000")) {
+					t.Fatalf("nanoseconds: %s", b)
+				}
+				var got struct{ Wait float64 }
+				if err := json.Unmarshal(b, &got); err != nil {
+					t.Fatal(err, string(b))
+				}
+				if got.Wait < 2.2 || got.Wait > 2.4 {
+					t.Fatalf("%s", b)
+				}
+			},
+		},
+		{
+			name: "time.Duration as milliseconds not nanoseconds",
+			in:   2300 * time.Microsecond,
+			check: func(t *testing.T, b []byte) {
+				var ms float64
+				if err := json.Unmarshal(b, &ms); err != nil {
+					t.Fatal(err, string(b))
+				}
+				if ms < 2.2 || ms > 2.4 {
+					t.Fatalf("%s", b)
+				}
+			},
+		},
+		{
 			name: "nil nested slice becomes []",
 			in:   row{Empty: nil},
 			check: func(t *testing.T, b []byte) {

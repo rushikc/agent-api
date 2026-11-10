@@ -81,9 +81,6 @@ func WalkTree(src ProcSource, root int32) []int32 {
 
 func SumTree(src ProcSource, last map[int32]cpuPoint, now time.Time, root int32) (Sample, map[int32]cpuPoint) {
 	next := map[int32]cpuPoint{}
-	for k, v := range last {
-		next[k] = v
-	}
 	if root <= 0 {
 		return Sample{}, next
 	}
@@ -101,22 +98,24 @@ func SumTree(src ProcSource, last map[int32]cpuPoint, now time.Time, root int32)
 			continue
 		}
 		start, _ := src.StartTime(pid)
-		prev, ok := last[pid]
-		if ok && prev.start != 0 && start != 0 && prev.start != start {
-			ok = false
-		}
-		if ok && now.After(prev.wall) {
-			dt := now.Sub(prev.wall).Seconds()
-			if dt > 0 {
-				delta := ct - prev.cpu
-				if delta < 0 {
-					delta = 0
-				}
-				cpu += (delta / dt) * 100
-				used++
-			}
-		}
 		next[pid] = cpuPoint{cpu: ct, wall: now, start: start}
+		prev, ok := last[pid]
+		if !ok {
+			continue
+		}
+		if prev.start != 0 && start != 0 && prev.start != start {
+			continue
+		}
+		dt := now.Sub(prev.wall)
+		if dt < time.Second {
+			continue
+		}
+		delta := ct - prev.cpu
+		if delta < 0 {
+			delta = 0
+		}
+		cpu += (delta / dt.Seconds()) * 100
+		used++
 	}
 	if used == 0 {
 		pct := 0.0
@@ -227,6 +226,13 @@ func ReadSnapshot(path string) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	return snap, nil
+}
+
+func FormatCPUPct(pct float64) string {
+	if pct < 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.1f", pct)
 }
 
 func FormatShort(snap Snapshot) string {

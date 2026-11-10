@@ -46,6 +46,9 @@ func Walk(ctx context.Context, opts Options) (*Result, error) {
 	if opts.Workers <= 0 {
 		opts.Workers = 16
 	}
+	if opts.Home == "" {
+		opts.Home, _ = os.UserHomeDir()
+	}
 	start := time.Now()
 	w := &walker{
 		opts: opts,
@@ -63,7 +66,7 @@ func Walk(ctx context.Context, opts Options) (*Result, error) {
 		if err != nil {
 			if isDenied(err) {
 				w.denied++
-				if isPrivacyDir(expanded) {
+				if isPrivacyDir(expanded, opts.Home) {
 					w.privacy = true
 				}
 			}
@@ -133,9 +136,9 @@ finished:
 		Depth:          opts.Depth,
 		Nested:         opts.Nested,
 		IncludeVolumes: opts.IncludeVolumes,
-		Duration:       time.Since(start),
 		Partial:        w.partial,
 	}
+	res.DurationMS, res.Duration = setElapsed(time.Since(start))
 	Annotate(res, opts.Projects)
 	return res, nil
 }
@@ -160,13 +163,15 @@ func (w *walker) snapshot(elapsed time.Duration) Progress {
 	if len(w.q) > 0 {
 		cur = w.q[0].path
 	}
+	ms, human := setElapsed(elapsed)
 	return Progress{
-		Dirs:    w.dirs,
-		Repos:   len(w.repos),
-		Denied:  w.denied,
-		Current: cur,
-		Elapsed: elapsed,
-		Privacy: w.privacy,
+		Dirs:      w.dirs,
+		Repos:     len(w.repos),
+		Denied:    w.denied,
+		Current:   cur,
+		ElapsedMS: ms,
+		Elapsed:   human,
+		Privacy:   w.privacy,
 	}
 }
 
@@ -222,7 +227,7 @@ func (w *walker) visit(ctx context.Context, it item) {
 	if ctx.Err() != nil {
 		return
 	}
-	if skipPath(it.path, w.opts.Exclude) {
+	if skipPath(it.path, skipOpts{exclude: w.opts.Exclude, home: w.opts.Home, includeHidden: w.opts.IncludeHidden, allow: w.opts.AllowRoots}) {
 		return
 	}
 	entries, err := os.ReadDir(it.path)
@@ -233,7 +238,7 @@ func (w *walker) visit(ctx context.Context, it item) {
 		if isDenied(err) {
 			w.mu.Lock()
 			w.denied++
-			if isPrivacyDir(it.path) {
+			if isPrivacyDir(it.path, w.opts.Home) {
 				w.privacy = true
 			}
 			w.mu.Unlock()
@@ -274,7 +279,7 @@ func (w *walker) visit(ctx context.Context, it item) {
 		if !e.IsDir() {
 			continue
 		}
-		if skipPath(child, w.opts.Exclude) {
+		if skipPath(child, skipOpts{exclude: w.opts.Exclude, home: w.opts.Home, includeHidden: w.opts.IncludeHidden, allow: w.opts.AllowRoots}) {
 			continue
 		}
 		dev := it.dev

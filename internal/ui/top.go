@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rushikesh/devhub/internal/core"
+	"github.com/rushikesh/devhub/internal/monitor"
 )
 
 func RunTop(svc *core.Service) error {
@@ -87,7 +88,9 @@ func (m *topModel) apply() {
 		}
 		rows = append(rows, row{v: it, pids: strings.Join(pids, ",")})
 		if it.Session.Status == "running" {
-			totalCPU += it.CPUPct
+			if it.CPUPct >= 0 {
+				totalCPU += it.CPUPct
+			}
 			totalRSS += it.RSSBytes
 		}
 	}
@@ -112,7 +115,7 @@ func (m *topModel) apply() {
 			s.Project,
 			string(s.Kind),
 			r.pids,
-			fmt.Sprintf("%.1f", r.v.CPUPct),
+			monitor.FormatCPUPct(r.v.CPUPct),
 			formatRSS(r.v.RSSBytes),
 		})
 	}
